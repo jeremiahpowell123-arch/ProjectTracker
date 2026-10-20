@@ -1,10 +1,11 @@
 {% extends "base.html" %}
-{% block title %}Sign in · Pipeline Tracker{% endblock %}
+{% from "_icons.html" import logo %}
+{% block title %}Sign in · ProjectTracker{% endblock %}
 {% block body %}
 <main class="login-wrap">
   <section class="login-card">
-    <h1>Pipeline Tracker</h1>
-    <p class="subtitle">Due diligence case lifecycle</p>
+    <div class="login-brand">{{ logo() }}<span>ProjectTracker</span></div>
+    <p class="subtitle">Projects. Progress. Together.</p>
     {% with messages = get_flashed_messages() %}
       {% for message in messages %}
         <div class="alert">{{ message }}</div>

@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% from "_icons.html" import icon, logo %}
+{% block body %}
+<div class="shell">
+  <aside class="sidebar">
+    <a class="logo" href="{{ url_for('home') }}">{{ logo() }}<span>ProjectTracker</span></a>
+
+    <nav class="nav" aria-label="Main">
+      <a class="nav-link {% if active_nav == 'all' %}active{% endif %}" href="{{ url_for('home') }}">{{ icon('folder') }}<span>All Projects</span></a>
+      <a class="nav-link {% if active_nav == 'mine' %}active{% endif %}" href="{{ url_for('home', mine=1) }}">{{ icon('user') }}<span>My Projects</span></a>
+      {% if user["role"] == "Administrator" %}
+        <div class="nav-label">Admin</div>
+        <span class="nav-link disabled">{{ icon('layers') }}<span>Workflows</span><em>Soon</em></span>
+        <span class="nav-link disabled">{{ icon('tag') }}<span>Tags</span><em>Soon</em></span>
+        <span class="nav-link disabled">{{ icon('users') }}<span>Users</span><em>Soon</em></span>
+      {% endif %}
+    </nav>
+
+    <div class="sidebar-user">
+      <span class="avatar {{ user['id']|avatar_class }}">{{ user["initials"] }}</span>
+      <div class="who-text">
+        <strong>{{ user["name"] }}</strong>
+        <span>{{ user["role"]|role_label }}</span>
+      </div>
+      <a class="signout" href="{{ url_for('logout') }}">Sign out</a>
+    </div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <form class="search" method="get" action="{{ url_for('home') }}" role="search">
+        {{ icon('search') }}
+        <input type="search" name="q" value="{{ request.args.get('q', '') }}" placeholder="Search projects" aria-label="Search projects">
+        {% if request.args.get('view') %}<input type="hidden" name="view" value="{{ request.args.get('view') }}">{% endif %}
+        {% if request.args.get('mine') %}<input type="hidden" name="mine" value="{{ request.args.get('mine') }}">{% endif %}
+      </form>
+      {% if user["role"] == "Administrator" %}
+        <a class="btn" href="{{ url_for('new_case') }}">{{ icon('plus') }}<span>New Project</span></a>
+      {% endif %}
+    </header>
+
+    <main class="content">
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% for category, message in messages %}
+          <div class="alert {{ 'success' if category == 'success' else '' }}">{{ message }}</div>
+        {% endfor %}
+      {% endwith %}
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+</div>
+{% endblock %}

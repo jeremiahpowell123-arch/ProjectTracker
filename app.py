@@ -12,7 +12,37 @@ app.secret_key = "demo-only-change-before-real-use"
 
 RISK_LEVELS = ["Low", "Medium", "High"]
 
+STATUS_FILTERS = [
+    ("all", "All"),
+    ("ontrack", "On Track"),
+    ("soon", "Due Soon"),
+    ("overdue", "Overdue"),
+    ("complete", "Complete"),
+]
+
+# The database stores the role "Analyst". The screens show "Contributor".
+ROLE_LABELS = {"Analyst": "Contributor"}
+
 init_db()
+
+
+@app.template_filter("role_label")
+def role_label(role):
+    return ROLE_LABELS.get(role, role)
+
+
+@app.template_filter("pretty_date")
+def pretty_date(text):
+    try:
+        d = date.fromisoformat(text)
+    except (TypeError, ValueError):
+        return text
+    return f"{d:%b} {d.day}, {d.year}"
+
+
+@app.template_filter("avatar_class")
+def avatar_class(user_id):
+    return f"av-{int(user_id) % 5}"
 
 
 def current_user():
@@ -60,10 +90,32 @@ def due_info(row):
     return case
 
 
+def build_columns(cases, stage_names):
+    """Group projects into board columns by their current stage."""
+    columns = [{"name": n, "kind": "stage", "cases": []} for n in stage_names]
+    by_name = {col["name"]: col for col in columns}
+    other = {"name": "Other stages", "kind": "other", "cases": []}
+    done = {"name": "Complete", "kind": "done", "cases": []}
+    for case in cases:
+        stage = case["current_stage"]
+        if stage is None and case["total_stages"] > 0:
+            done["cases"].append(case)
+        elif stage in by_name:
+            by_name[stage]["cases"].append(case)
+        else:
+            other["cases"].append(case)
+    if other["cases"]:
+        columns.append(other)
+    columns.append(done)
+    return columns
+
+
 CASE_QUERY = """
     SELECT c.*,
            o.name AS owner_name,
+           o.initials AS owner_initials,
            m.name AS manager_name,
+           m.initials AS manager_initials,
            (SELECT COUNT(*) FROM case_stages s
              WHERE s.case_id = c.id AND s.archived = 0) AS total_stages,
            (SELECT COUNT(*) FROM case_stages s
@@ -85,6 +137,15 @@ def home():
     if user is None:
         return redirect(url_for("login"))
 
+    view = request.args.get("view", "board")
+    if view not in ("board", "list"):
+        view = "board"
+    status = request.args.get("status", "all")
+    if status not in dict(STATUS_FILTERS):
+        status = "all"
+    query = request.args.get("q", "").strip()
+    mine = request.args.get("mine") == "1"
+
     conn = get_db()
     if user["role"] == "Administrator":
         rows = conn.execute(CASE_QUERY + " ORDER BY c.due_date").fetchall()
@@ -93,10 +154,40 @@ def home():
             CASE_QUERY + " WHERE c.owner_id = ? OR c.manager_id = ? ORDER BY c.due_date",
             (user["id"], user["id"]),
         ).fetchall()
+    stage_names = [
+        r["name"]
+        for r in conn.execute(
+            "SELECT name FROM template_stages WHERE active = 1 ORDER BY position"
+        ).fetchall()
+    ]
     conn.close()
 
     cases = [due_info(row) for row in rows]
-    return render_template("home.html", user=user, cases=cases)
+    if mine:
+        cases = [c for c in cases if user["id"] in (c["owner_id"], c["manager_id"])]
+    if query:
+        cases = [c for c in cases if query.lower() in c["customer_name"].lower()]
+
+    counts = {key: 0 for key, _ in STATUS_FILTERS}
+    counts["all"] = len(cases)
+    for c in cases:
+        counts[c["due_class"]] += 1
+    if status != "all":
+        cases = [c for c in cases if c["due_class"] == status]
+
+    return render_template(
+        "home.html",
+        user=user,
+        cases=cases,
+        columns=build_columns(cases, stage_names),
+        view=view,
+        status=status,
+        query=query,
+        mine=mine,
+        counts=counts,
+        status_filters=STATUS_FILTERS,
+        active_nav="mine" if mine else "all",
+    )
 
 
 @app.route("/cases/new", methods=["GET", "POST"])
@@ -114,6 +205,10 @@ def new_case():
     managers = conn.execute(
         "SELECT id, name, role FROM users "
         "WHERE role IN ('Manager', 'Administrator') ORDER BY name"
+    ).fetchall()
+    stages = conn.execute(
+        "SELECT name, high_priority FROM template_stages "
+        "WHERE active = 1 ORDER BY position"
     ).fetchall()
 
     if request.method == "POST":
@@ -139,7 +234,7 @@ def new_case():
                 (customer, risk, due, owner_id, manager_id, user["id"]),
             )
             case_id = cursor.lastrowid
-            # Each case gets its own copy of the current master workflow.
+            # Each project gets its own copy of the current master workflow.
             conn.execute(
                 "INSERT INTO case_stages (case_id, name, position, high_priority) "
                 "SELECT ?, name, position, high_priority FROM template_stages "
@@ -148,7 +243,7 @@ def new_case():
             )
             conn.commit()
             conn.close()
-            flash(f"Case created for {customer}.", "success")
+            flash(f"Project created: {customer}.", "success")
             return redirect(url_for("home"))
 
     conn.close()
@@ -157,8 +252,10 @@ def new_case():
         user=user,
         owners=owners,
         managers=managers,
+        stages=stages,
         risk_levels=RISK_LEVELS,
         form=request.form,
+        active_nav="new",
     )
 
 

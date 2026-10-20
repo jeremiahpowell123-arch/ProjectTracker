@@ -1,22 +1,18 @@
-{% extends "base.html" %}
-{% block title %}New case · Pipeline Tracker{% endblock %}
-{% block body %}
-{% include "_topbar.html" %}
-<main class="page narrow">
-  <a class="back" href="{{ url_for('home') }}">← Back to cases</a>
-  <h1>New case</h1>
+{% extends "app_base.html" %}
+{% block title %}New Project · ProjectTracker{% endblock %}
+{% block content %}
+<a class="back" href="{{ url_for('home') }}">← Back to projects</a>
+<div class="page-head">
+  <h1>New Project</h1>
+  <p class="muted">Choose an owner and a manager. The project starts with the standard workflow.</p>
+</div>
 
-  {% with messages = get_flashed_messages(with_categories=true) %}
-    {% for category, message in messages %}
-      <div class="alert">{{ message }}</div>
-    {% endfor %}
-  {% endwith %}
-
+<div class="form-layout">
   <form method="post" class="card form-card">
-    <label for="customer_name">Customer name (fictional names only in this demo)</label>
+    <label for="customer_name">Project name <span class="hint">(fictional names only in this demo)</span></label>
     <input id="customer_name" name="customer_name" value="{{ form.get('customer_name', '') }}" required>
 
-    <label for="risk_rating">Risk rating</label>
+    <label for="risk_rating">Risk</label>
     <select id="risk_rating" name="risk_rating" required>
       {% for r in risk_levels %}
         <option value="{{ r }}" {% if form.get('risk_rating') == r %}selected{% endif %}>{{ r }}</option>
@@ -26,21 +22,34 @@
     <label for="due_date">Due date</label>
     <input id="due_date" name="due_date" type="date" value="{{ form.get('due_date', '') }}" required>
 
-    <label for="owner_id">Owner (analyst)</label>
+    <label for="owner_id">Owner</label>
     <select id="owner_id" name="owner_id" required>
-      {% for a in analysts %}
-        <option value="{{ a['id'] }}" {% if form.get('owner_id') == a['id']|string %}selected{% endif %}>{{ a['name'] }}</option>
+      {% for o in owners %}
+        <option value="{{ o['id'] }}" {% if form.get('owner_id') == o['id']|string %}selected{% endif %}>{{ o['name'] }} ({{ o['role']|role_label }})</option>
       {% endfor %}
     </select>
 
-    <label for="manager_id">Manager</label>
+    <label for="manager_id">Manager <span class="hint">(approves requests to archive critical stages)</span></label>
     <select id="manager_id" name="manager_id" required>
       {% for m in managers %}
-        <option value="{{ m['id'] }}" {% if form.get('manager_id') == m['id']|string %}selected{% endif %}>{{ m['name'] }}</option>
+        <option value="{{ m['id'] }}" {% if form.get('manager_id') == m['id']|string %}selected{% endif %}>{{ m['name'] }} ({{ m['role']|role_label }})</option>
       {% endfor %}
     </select>
 
-    <button type="submit">Create case</button>
+    <div class="form-actions">
+      <button class="btn" type="submit">Create project</button>
+      <a class="link" href="{{ url_for('home') }}">Cancel</a>
+    </div>
   </form>
-</main>
+
+  <aside class="card stage-preview">
+    <h2>Starting stages</h2>
+    <p class="muted-sm">Copied from the standard workflow.</p>
+    <ol>
+      {% for s in stages %}
+        <li>{{ s['name'] }}{% if s['high_priority'] %} <span class="chip due-review">High priority</span>{% endif %}</li>
+      {% endfor %}
+    </ol>
+  </aside>
+</div>
 {% endblock %}

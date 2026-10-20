@@ -1,58 +1,100 @@
-{% extends "base.html" %}
-{% block title %}Cases · Pipeline Tracker{% endblock %}
-{% block body %}
-{% include "_topbar.html" %}
-<main class="page">
-  {% with messages = get_flashed_messages(with_categories=true) %}
-    {% for category, message in messages %}
-      <div class="alert {{ 'success' if category == 'success' else '' }}">{{ message }}</div>
-    {% endfor %}
-  {% endwith %}
+{% extends "app_base.html" %}
+{% block title %}{% if mine %}My Projects{% else %}All Projects{% endif %} · ProjectTracker{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>{% if mine %}My Projects{% else %}All Projects{% endif %}</h1>
+  <p class="muted">Track progress, spot blockers, and keep your team moving.</p>
+</div>
 
-  <div class="page-head">
-    <div>
-      <h1>Cases</h1>
-      <p class="muted">
-        {% if user["role"] == "Administrator" %}All cases{% else %}Cases you own or manage{% endif %}
-      </p>
-    </div>
-    {% if user["role"] == "Administrator" %}
-      <a class="btn" href="{{ url_for('new_case') }}">+ New case</a>
+<div class="toolbar">
+  <div class="pills" role="group" aria-label="Filter by status">
+    {% for key, label in status_filters %}
+      <a class="pill-link {% if status == key %}active{% endif %}"
+         href="{{ url_for('home', status=(key if key != 'all' else None), view=(view if view != 'board' else None), q=(query or None), mine=(1 if mine else None)) }}">
+        {{ label }} <span class="count">{{ counts[key] }}</span>
+      </a>
+    {% endfor %}
+  </div>
+  <div class="segmented" role="group" aria-label="Choose a view">
+    <a class="{% if view == 'board' %}active{% endif %}"
+       href="{{ url_for('home', status=(status if status != 'all' else None), q=(query or None), mine=(1 if mine else None)) }}">Board</a>
+    <a class="{% if view == 'list' %}active{% endif %}"
+       href="{{ url_for('home', view='list', status=(status if status != 'all' else None), q=(query or None), mine=(1 if mine else None)) }}">List</a>
+  </div>
+</div>
+
+{% if not cases %}
+  <div class="card empty">
+    {% if status != 'all' or query or mine %}
+      No projects match these filters.
+    {% elif user["role"] == "Administrator" %}
+      No projects yet. Click <strong>New Project</strong> to create the first one.
+    {% else %}
+      No projects are assigned to you yet.
     {% endif %}
   </div>
 
-  {% if cases %}
-    <div class="card table-wrap">
-      <table class="case-table">
-        <thead>
+{% elif view == "board" %}
+  <div class="board">
+    {% for col in columns %}
+      <section class="column {% if col.kind == 'done' %}col-done{% elif col.kind == 'other' %}col-other{% else %}col-{{ loop.index0 % 4 }}{% endif %}">
+        <header class="column-head">
+          <span class="dot"></span>
+          <h2>{{ col.name }}</h2>
+          <span class="count">{{ col.cases|length }}</span>
+        </header>
+        {% for c in col.cases %}
+          <article class="project-card">
+            <div class="project-title">{{ c.customer_name }}</div>
+            <div class="project-tags">
+              <span class="pill risk-{{ c.risk_rating|lower }}">{{ c.risk_rating }}</span>
+              <span class="chip due-{{ c.due_class }}">{{ c.due_label }}</span>
+            </div>
+            <div class="project-meta">Due {{ c.due_date|pretty_date }} · {{ c.done_stages }} of {{ c.total_stages }} stages</div>
+            <div class="project-foot">
+              <span class="avatar sm {{ c.owner_id|avatar_class }}">{{ c.owner_initials }}</span>
+              <span>{{ c.owner_name }}</span>
+            </div>
+          </article>
+        {% else %}
+          <p class="column-empty">No projects</p>
+        {% endfor %}
+      </section>
+    {% endfor %}
+  </div>
+
+{% else %}
+  <div class="card table-wrap">
+    <table class="case-table">
+      <thead>
+        <tr>
+          <th>Project</th><th>Risk</th><th>Current stage</th><th>Progress</th>
+          <th>Owner</th><th>Manager</th><th>Due</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in cases %}
           <tr>
-            <th>Customer</th><th>Risk</th><th>Current stage</th><th>Progress</th>
-            <th>Owner</th><th>Manager</th><th>Due</th>
+            <td class="strong">{{ c.customer_name }}</td>
+            <td><span class="pill risk-{{ c.risk_rating|lower }}">{{ c.risk_rating }}</span></td>
+            <td>{{ c.current_stage or "All stages complete" }}</td>
+            <td>
+              <div class="progress-cell">
+                <div class="bar"><span style="width: {{ ((c.done_stages * 100 / c.total_stages) if c.total_stages else 0)|round|int }}%"></span></div>
+                <span class="muted-sm">{{ c.done_stages }} of {{ c.total_stages }}</span>
+              </div>
+            </td>
+            <td>
+              <span class="person"><span class="avatar sm {{ c.owner_id|avatar_class }}">{{ c.owner_initials }}</span>{{ c.owner_name }}</span>
+            </td>
+            <td>
+              <span class="person"><span class="avatar sm {{ c.manager_id|avatar_class }}">{{ c.manager_initials }}</span>{{ c.manager_name }}</span>
+            </td>
+            <td><span class="chip due-{{ c.due_class }}">{{ c.due_label }}</span></td>
           </tr>
-        </thead>
-        <tbody>
-          {% for c in cases %}
-            <tr>
-              <td class="strong">{{ c.customer_name }}</td>
-              <td><span class="chip risk-{{ c.risk_rating|lower }}">{{ c.risk_rating }}</span></td>
-              <td>{{ c.current_stage or "All stages complete" }}</td>
-              <td>{{ c.done_stages }} of {{ c.total_stages }}</td>
-              <td>{{ c.owner_name }}</td>
-              <td>{{ c.manager_name }}</td>
-              <td><span class="chip due-{{ c.due_class }}">{{ c.due_label }}</span></td>
-            </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-  {% else %}
-    <div class="card empty">
-      {% if user["role"] == "Administrator" %}
-        No cases yet. Click <strong>+ New case</strong> to create one.
-      {% else %}
-        No cases are assigned to you yet.
-      {% endif %}
-    </div>
-  {% endif %}
-</main>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% endif %}
 {% endblock %}
