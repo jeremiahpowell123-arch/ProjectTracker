@@ -1,0 +1,142 @@
+{% extends "app_base.html" %}
+{% block title %}{{ case.customer_name }} · ProjectTracker{% endblock %}
+{% block content %}
+<a class="back" href="{{ url_for('home') }}">← Back to projects</a>
+
+<div class="detail-title">
+  <h1>{{ case.customer_name }}</h1>
+  <span class="pill risk-{{ case.risk_rating|lower }}">{{ case.risk_rating }}</span>
+  <span class="chip due-{{ case.due_class }}">{{ case.due_label }}</span>
+</div>
+
+<div class="card meta-grid">
+  <div class="meta-item">
+    <div class="meta-label">Due date</div>
+    <div class="meta-value">{{ case.due_date|pretty_date }}</div>
+  </div>
+  <div class="meta-item">
+    <div class="meta-label">Owner</div>
+    <div class="meta-value"><span class="avatar sm {{ case.owner_id|avatar_class }}">{{ case.owner_initials }}</span>{{ case.owner_name }}</div>
+  </div>
+  <div class="meta-item">
+    <div class="meta-label">Manager</div>
+    <div class="meta-value"><span class="avatar sm {{ case.manager_id|avatar_class }}">{{ case.manager_initials }}</span>{{ case.manager_name }}</div>
+  </div>
+  <div class="meta-item">
+    <div class="meta-label">Progress</div>
+    <div class="meta-value">{{ case.done_stages }} of {{ case.total_stages }} stages</div>
+    <div class="bar wide"><span style="width: {{ ((case.done_stages * 100 / case.total_stages) if case.total_stages else 0)|round|int }}%"></span></div>
+  </div>
+</div>
+
+<div class="detail-layout">
+  <section class="card panel">
+    <h2>Journey</h2>
+
+    <ol class="stepper">
+      {% for s in stages %}
+        <li class="step step-{{ s['status']|lower|replace(' ', '-') }}">
+          <span class="step-dot">{% if s['status'] == 'Complete' %}✓{% else %}{{ loop.index }}{% endif %}</span>
+          <span class="step-name">{{ s['name'] }}</span>
+        </li>
+      {% endfor %}
+    </ol>
+
+    <ul class="stage-list">
+      {% for s in stages %}
+        <li class="stage-row">
+          <span class="stage-mark mark-{{ s['status']|lower|replace(' ', '-') }}"></span>
+          <div class="stage-main">
+            <span>{{ s['name'] }}</span>
+            {% if s['high_priority'] %}<span class="chip due-review">High priority</span>{% endif %}
+          </div>
+          {% if can_edit %}
+            <form method="post" class="status-form"
+                  action="{{ url_for('update_stage_status', case_id=case.id, stage_id=s['id']) }}">
+              <select name="status" class="status-select status-{{ s['status']|lower|replace(' ', '-') }}"
+                      aria-label="Status for {{ s['name'] }}" onchange="this.form.requestSubmit()">
+                {% for st in statuses %}
+                  <option value="{{ st }}" {% if st == s['status'] %}selected{% endif %}>{{ st }}</option>
+                {% endfor %}
+              </select>
+              <noscript><button type="submit" class="btn small">Save</button></noscript>
+            </form>
+          {% else %}
+            <span class="chip status-chip status-{{ s['status']|lower|replace(' ', '-') }}">{{ s['status'] }}</span>
+          {% endif %}
+        </li>
+      {% endfor %}
+    </ul>
+
+    {% if not can_edit %}
+      <p class="hint-note">Only the project owner changes a stage's status.{% if can_override %} Use Manager controls to override.{% endif %}</p>
+    {% endif %}
+  </section>
+
+  <div class="side-stack">
+  {% if can_override %}
+  <section class="card panel controls">
+    <h2>Manager controls</h2>
+    <p class="muted-sm">Use these when the owner is unavailable. A reason is required and is saved in the activity log.</p>
+
+    <form method="post" action="{{ url_for('override_status', case_id=case.id) }}" class="control-form">
+      <h3>Override a stage status</h3>
+      <label for="ov-stage">Stage</label>
+      <select id="ov-stage" name="stage_id" required>
+        {% for s in stages %}
+          <option value="{{ s['id'] }}">{{ s['name'] }}</option>
+        {% endfor %}
+      </select>
+      <label for="ov-status">New status</label>
+      <select id="ov-status" name="status" required>
+        {% for st in statuses %}<option value="{{ st }}">{{ st }}</option>{% endfor %}
+      </select>
+      <label for="ov-reason">Reason</label>
+      <textarea id="ov-reason" name="reason" maxlength="500" required placeholder="For example: Owner is on PTO"></textarea>
+      <button type="submit">Apply override</button>
+    </form>
+
+    <form method="post" action="{{ url_for('reassign_owner', case_id=case.id) }}" class="control-form">
+      <h3>Reassign the owner</h3>
+      <label for="ra-owner">New owner</label>
+      <select id="ra-owner" name="new_owner_id" required>
+        {% for o in new_owner_choices %}
+          <option value="{{ o['id'] }}">{{ o['name'] }} ({{ o['role']|role_label }})</option>
+        {% endfor %}
+      </select>
+      <label for="ra-reason">Reason</label>
+      <textarea id="ra-reason" name="reason" maxlength="500" required placeholder="For example: Rebalancing workload"></textarea>
+      <button type="submit" class="secondary">Reassign project</button>
+    </form>
+  </section>
+  {% endif %}
+
+  <aside class="card panel">
+    <h2>Recent activity</h2>
+    {% if activity %}
+      <ul class="activity">
+        {% for a in activity %}
+          <li>
+            <span class="avatar sm {{ a['actor_id']|avatar_class }}">{{ a['actor_initials'] }}</span>
+            <div>
+              {% set parts = a['detail'].split(' | Reason: ') %}
+              <div class="activity-text">
+                <strong>{{ a['actor_name'] }}</strong>
+                {% if a['action'] == 'created' %}created {{ parts[0] }}
+                {% elif a['action'] == 'override_status' %}<span class="chip due-review">Override</span> {{ parts[0] }}
+                {% elif a['action'] == 'reassign' %}<span class="chip due-review">Reassigned</span> {{ parts[0] }}
+                {% else %}changed {{ parts[0] }}{% endif %}
+              </div>
+              {% if parts|length > 1 %}<div class="activity-reason">Reason: {{ parts[1] }}</div>{% endif %}
+              <div class="activity-time">{{ a['created_at']|pretty_time }}</div>
+            </div>
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p class="muted-sm">No activity yet. Changes to this project will appear here.</p>
+    {% endif %}
+  </aside>
+  </div>
+</div>
+{% endblock %}

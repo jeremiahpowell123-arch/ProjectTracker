@@ -45,7 +45,7 @@
         </header>
         {% for c in col.cases %}
           <article class="project-card">
-            <div class="project-title">{{ c.customer_name }}</div>
+            <a class="project-title" href="{{ url_for('case_detail', case_id=c.id) }}">{{ c.customer_name }}</a>
             <div class="project-tags">
               <span class="pill risk-{{ c.risk_rating|lower }}">{{ c.risk_rating }}</span>
               <span class="chip due-{{ c.due_class }}">{{ c.due_label }}</span>
@@ -75,7 +75,7 @@
       <tbody>
         {% for c in cases %}
           <tr>
-            <td class="strong">{{ c.customer_name }}</td>
+            <td class="strong"><a class="row-link" href="{{ url_for('case_detail', case_id=c.id) }}">{{ c.customer_name }}</a></td>
             <td><span class="pill risk-{{ c.risk_rating|lower }}">{{ c.risk_rating }}</span></td>
             <td>{{ c.current_stage or "All stages complete" }}</td>
             <td>

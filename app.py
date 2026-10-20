@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime, timezone
 
 from flask import (
     Flask, abort, flash, redirect, render_template, request, session, url_for,
@@ -11,6 +11,7 @@ app = Flask(__name__)
 app.secret_key = "demo-only-change-before-real-use"
 
 RISK_LEVELS = ["Low", "Medium", "High"]
+STATUSES = ["Not started", "In progress", "Complete"]
 
 STATUS_FILTERS = [
     ("all", "All"),
@@ -43,6 +44,17 @@ def pretty_date(text):
 @app.template_filter("avatar_class")
 def avatar_class(user_id):
     return f"av-{int(user_id) % 5}"
+
+
+@app.template_filter("pretty_time")
+def pretty_time(text):
+    """Show a stored UTC timestamp in this computer's local time."""
+    try:
+        d = datetime.fromisoformat(text).replace(tzinfo=timezone.utc).astimezone()
+    except (TypeError, ValueError):
+        return text
+    hour = d.hour % 12 or 12
+    return f"{d:%b} {d.day}, {hour}:{d:%M} {d:%p}"
 
 
 def current_user():
@@ -129,6 +141,43 @@ CASE_QUERY = """
     JOIN users o ON o.id = c.owner_id
     JOIN users m ON m.id = c.manager_id
 """
+
+
+def log_history(conn, case_id, actor_id, action, detail):
+    """Write one line to a project's read-only history."""
+    conn.execute(
+        "INSERT INTO history (case_id, actor_id, action, detail) VALUES (?, ?, ?, ?)",
+        (case_id, actor_id, action, detail),
+    )
+
+
+def get_case_for(conn, user, case_id):
+    """Return the project if this person may see it, otherwise None."""
+    row = conn.execute(CASE_QUERY + " WHERE c.id = ?", (case_id,)).fetchone()
+    if row is None:
+        return None
+    if user["role"] != "Administrator" and user["id"] not in (
+        row["owner_id"], row["manager_id"]
+    ):
+        return None
+    return due_info(row)
+
+
+def can_edit(user, case):
+    """Only the project's owner changes stage status day to day."""
+    return user["id"] == case["owner_id"]
+
+
+def can_override(user, case):
+    """The project's manager and Administrators can step in when needed."""
+    return user["role"] == "Administrator" or user["id"] == case["manager_id"]
+
+
+MAX_REASON = 500
+
+
+def clean_reason(text):
+    return " ".join(text.split())[:MAX_REASON]
 
 
 @app.route("/")
@@ -241,6 +290,7 @@ def new_case():
                 "WHERE active = 1 ORDER BY position",
                 (case_id,),
             )
+            log_history(conn, case_id, user["id"], "created", "the project")
             conn.commit()
             conn.close()
             flash(f"Project created: {customer}.", "success")
@@ -257,6 +307,178 @@ def new_case():
         form=request.form,
         active_nav="new",
     )
+
+
+@app.route("/cases/<int:case_id>")
+def case_detail(case_id):
+    user = current_user()
+    if user is None:
+        return redirect(url_for("login"))
+
+    conn = get_db()
+    case = get_case_for(conn, user, case_id)
+    if case is None:
+        conn.close()
+        abort(404)
+
+    stages = conn.execute(
+        "SELECT * FROM case_stages WHERE case_id = ? AND archived = 0 ORDER BY position",
+        (case_id,),
+    ).fetchall()
+    activity = conn.execute(
+        "SELECT h.*, u.name AS actor_name, u.initials AS actor_initials "
+        "FROM history h JOIN users u ON u.id = h.actor_id "
+        "WHERE h.case_id = ? ORDER BY h.id DESC LIMIT 20",
+        (case_id,),
+    ).fetchall()
+    new_owner_choices = conn.execute(
+        "SELECT id, name, role FROM users WHERE id NOT IN (?, ?) ORDER BY name",
+        (case["owner_id"], case["manager_id"]),
+    ).fetchall()
+    conn.close()
+
+    return render_template(
+        "case_detail.html",
+        user=user,
+        case=case,
+        stages=stages,
+        activity=activity,
+        statuses=STATUSES,
+        new_owner_choices=new_owner_choices,
+        can_edit=can_edit(user, case),
+        can_override=can_override(user, case),
+        active_nav="all",
+    )
+
+
+@app.route("/cases/<int:case_id>/stages/<int:stage_id>/status", methods=["POST"])
+def update_stage_status(case_id, stage_id):
+    user = current_user()
+    if user is None:
+        return redirect(url_for("login"))
+
+    new_status = request.form.get("status", "")
+    conn = get_db()
+    case = get_case_for(conn, user, case_id)
+    if case is None:
+        conn.close()
+        abort(404)
+    if not can_edit(user, case):
+        conn.close()
+        abort(403)
+
+    stage = conn.execute(
+        "SELECT * FROM case_stages WHERE id = ? AND case_id = ? AND archived = 0",
+        (stage_id, case_id),
+    ).fetchone()
+    if stage is None or new_status not in STATUSES:
+        conn.close()
+        abort(400)
+
+    if new_status != stage["status"]:
+        conn.execute(
+            "UPDATE case_stages SET status = ? WHERE id = ?", (new_status, stage_id)
+        )
+        log_history(
+            conn, case_id, user["id"], "status_change",
+            f'{stage["name"]}: {stage["status"]} → {new_status}',
+        )
+        conn.commit()
+        flash(f'{stage["name"]} is now {new_status}.', "success")
+    conn.close()
+    return redirect(url_for("case_detail", case_id=case_id))
+
+
+@app.route("/cases/<int:case_id>/override-status", methods=["POST"])
+def override_status(case_id):
+    user = current_user()
+    if user is None:
+        return redirect(url_for("login"))
+
+    conn = get_db()
+    case = get_case_for(conn, user, case_id)
+    if case is None:
+        conn.close()
+        abort(404)
+    if not can_override(user, case):
+        conn.close()
+        abort(403)
+
+    stage_id = request.form.get("stage_id", "")
+    new_status = request.form.get("status", "")
+    reason = clean_reason(request.form.get("reason", ""))
+
+    stage = None
+    if stage_id.isdigit():
+        stage = conn.execute(
+            "SELECT * FROM case_stages WHERE id = ? AND case_id = ? AND archived = 0",
+            (int(stage_id), case_id),
+        ).fetchone()
+
+    if stage is None or new_status not in STATUSES:
+        flash("Choose a stage and a status.", "error")
+    elif not reason:
+        flash("A reason is required for an override.", "error")
+    elif new_status == stage["status"]:
+        flash(f'{stage["name"]} is already {new_status}.', "error")
+    else:
+        conn.execute(
+            "UPDATE case_stages SET status = ? WHERE id = ?", (new_status, stage["id"])
+        )
+        log_history(
+            conn, case_id, user["id"], "override_status",
+            f'{stage["name"]}: {stage["status"]} → {new_status} | Reason: {reason}',
+        )
+        conn.commit()
+        flash(f'Override applied: {stage["name"]} is now {new_status}.', "success")
+    conn.close()
+    return redirect(url_for("case_detail", case_id=case_id))
+
+
+@app.route("/cases/<int:case_id>/reassign", methods=["POST"])
+def reassign_owner(case_id):
+    user = current_user()
+    if user is None:
+        return redirect(url_for("login"))
+
+    conn = get_db()
+    case = get_case_for(conn, user, case_id)
+    if case is None:
+        conn.close()
+        abort(404)
+    if not can_override(user, case):
+        conn.close()
+        abort(403)
+
+    new_owner_id = request.form.get("new_owner_id", "")
+    reason = clean_reason(request.form.get("reason", ""))
+
+    new_owner = None
+    if new_owner_id.isdigit():
+        new_owner = conn.execute(
+            "SELECT id, name FROM users WHERE id = ?", (int(new_owner_id),)
+        ).fetchone()
+
+    if new_owner is None:
+        flash("Choose the new owner.", "error")
+    elif new_owner["id"] == case["manager_id"]:
+        flash("The owner and manager must be different people.", "error")
+    elif new_owner["id"] == case["owner_id"]:
+        flash(f'{new_owner["name"]} is already the owner.', "error")
+    elif not reason:
+        flash("A reason is required to reassign a project.", "error")
+    else:
+        conn.execute(
+            "UPDATE cases SET owner_id = ? WHERE id = ?", (new_owner["id"], case_id)
+        )
+        log_history(
+            conn, case_id, user["id"], "reassign",
+            f'the owner from {case["owner_name"]} to {new_owner["name"]} | Reason: {reason}',
+        )
+        conn.commit()
+        flash(f'Project reassigned to {new_owner["name"]}.', "success")
+    conn.close()
+    return redirect(url_for("case_detail", case_id=case_id))
 
 
 @app.route("/login", methods=["GET", "POST"])

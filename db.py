@@ -50,6 +50,15 @@ CREATE TABLE IF NOT EXISTS case_stages (
     source TEXT NOT NULL DEFAULT 'template',
     archived INTEGER NOT NULL DEFAULT 0
 );
+
+CREATE TABLE IF NOT EXISTS history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    case_id INTEGER NOT NULL REFERENCES cases(id),
+    actor_id INTEGER NOT NULL REFERENCES users(id),
+    action TEXT NOT NULL,
+    detail TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 """
 
 
