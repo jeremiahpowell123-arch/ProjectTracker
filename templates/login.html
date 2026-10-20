@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Sign in · Pipeline Tracker{% endblock %}
+{% block body %}
+<main class="login-wrap">
+  <section class="login-card">
+    <h1>Pipeline Tracker</h1>
+    <p class="subtitle">Due diligence case lifecycle</p>
+    {% with messages = get_flashed_messages() %}
+      {% for message in messages %}
+        <div class="alert">{{ message }}</div>
+      {% endfor %}
+    {% endwith %}
+    <form method="post">
+      <label for="username">Username</label>
+      <input id="username" name="username" autocomplete="username" required autofocus>
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required>
+      <button type="submit">Sign in</button>
+    </form>
+    <p class="demo-note">Demo accounts: admin, manager, analyst. Password: demo1234</p>
+  </section>
+</main>
+{% endblock %}

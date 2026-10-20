@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}Cases · Pipeline Tracker{% endblock %}
+{% block body %}
+{% include "_topbar.html" %}
+<main class="page">
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% for category, message in messages %}
+      <div class="alert {{ 'success' if category == 'success' else '' }}">{{ message }}</div>
+    {% endfor %}
+  {% endwith %}
+
+  <div class="page-head">
+    <div>
+      <h1>Cases</h1>
+      <p class="muted">
+        {% if user["role"] == "Administrator" %}All cases{% else %}Cases you own or manage{% endif %}
+      </p>
+    </div>
+    {% if user["role"] == "Administrator" %}
+      <a class="btn" href="{{ url_for('new_case') }}">+ New case</a>
+    {% endif %}
+  </div>
+
+  {% if cases %}
+    <div class="card table-wrap">
+      <table class="case-table">
+        <thead>
+          <tr>
+            <th>Customer</th><th>Risk</th><th>Current stage</th><th>Progress</th>
+            <th>Owner</th><th>Manager</th><th>Due</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for c in cases %}
+            <tr>
+              <td class="strong">{{ c.customer_name }}</td>
+              <td><span class="chip risk-{{ c.risk_rating|lower }}">{{ c.risk_rating }}</span></td>
+              <td>{{ c.current_stage or "All stages complete" }}</td>
+              <td>{{ c.done_stages }} of {{ c.total_stages }}</td>
+              <td>{{ c.owner_name }}</td>
+              <td>{{ c.manager_name }}</td>
+              <td><span class="chip due-{{ c.due_class }}">{{ c.due_label }}</span></td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div class="card empty">
+      {% if user["role"] == "Administrator" %}
+        No cases yet. Click <strong>+ New case</strong> to create one.
+      {% else %}
+        No cases are assigned to you yet.
+      {% endif %}
+    </div>
+  {% endif %}
+</main>
+{% endblock %}
