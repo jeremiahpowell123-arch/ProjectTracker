@@ -391,7 +391,6 @@ button:hover, .btn:hover { background: var(--indigo-dark); }
   .form-layout { grid-template-columns: 1fr; }
 }
 
-
 /* ---------- Project detail ---------- */
 .project-card { position: relative; }
 a.project-title { display: block; color: #1E293B; text-decoration: none; }
@@ -452,7 +451,6 @@ a.project-title:hover { color: var(--indigo); }
   .meta-item:nth-child(-n+2) { border-bottom: 1px solid var(--line); }
 }
 
-
 /* ---------- Manager controls ---------- */
 .side-stack { display: flex; flex-direction: column; gap: 20px; }
 
@@ -499,7 +497,6 @@ button.secondary:hover { background: var(--indigo-tint); }
 .perm-note { margin-top: 14px; }
 .case-table td .avatar { margin-right: 8px; vertical-align: middle; }
 
-
 /* ---------- Project types and Workflows ---------- */
 .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 .type-filter select { width: auto; min-width: 180px; padding: 8px 12px; }
@@ -537,7 +534,6 @@ button.secondary:hover { background: var(--indigo-tint); }
   .wf-head .inline-form.grow, .wf-edit input[name="name"], .wf-add input[name="name"] { flex: 1 1 100%; }
 }
 
-
 /* ---------- Archive and out of scope ---------- */
 .due-outofscope { background: #E2E8F0; color: #475569; }
 .col-out { --col: #94A3B8; --tint: #EEF1F5; }
@@ -557,7 +553,6 @@ button.secondary:hover { background: var(--indigo-tint); }
 .btn-row { display: flex; gap: 10px; margin-top: 14px; }
 .btn-row button { flex: 1; margin-top: 0; }
 .detail-title + .banner { margin-top: 14px; }
-
 
 /* ---------- Notifications ---------- */
 .topbar-actions { display: flex; align-items: center; gap: 12px; }
@@ -580,7 +575,6 @@ button.secondary:hover { background: var(--indigo-tint); }
 .settings-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 14px 0; border-bottom: 1px solid var(--line); }
 .settings-card .btn { margin-top: 18px; }
 
-
 /* ---------- Comments ---------- */
 .main-stack { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
 .comments-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
@@ -596,3 +590,87 @@ button.secondary:hover { background: var(--indigo-tint); }
 .comment-action { margin-top: 4px; }
 .link-button { margin: 0; padding: 0; width: auto; background: none; border: 0; box-shadow: none; color: var(--indigo); font-size: 0.82rem; font-weight: 600; cursor: pointer; }
 .link-button:hover { text-decoration: underline; background: none; }
+
+/* ---------- Tags ---------- */
+.tags-panel { margin-bottom: 20px; padding: 14px 24px; }
+.tags-line { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.tags-label { font-size: 0.9rem; }
+.tag-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 2px; }
+.tag { display: inline-flex; align-items: center; gap: 4px; padding: 2px 10px; border-radius: 999px; background: #EEF2FF; color: #4338CA; font-size: 0.76rem; font-weight: 600; text-decoration: none; }
+a.tag:hover { background: #E0E7FF; }
+.tag-form { margin: 0; }
+.tag-edit { padding-right: 4px; font-size: 0.82rem; }
+.tag-x { margin: 0; width: 20px; height: 20px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: #4338CA; font-size: 1rem; line-height: 1; cursor: pointer; box-shadow: none; }
+.tag-x:hover { background: #C7D2FE; }
+.tag-add { display: inline-flex; align-items: center; gap: 8px; margin: 0; }
+.tag-add input { width: 170px; padding: 6px 10px; font-size: 0.85rem; }
+.type-filter { display: inline-flex; gap: 8px; align-items: center; }
+
+/* ---------- Add user ---------- */
+.add-user { margin-bottom: 20px; }
+.add-user-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)) auto; gap: 14px; align-items: end; }
+.add-user-grid label { display: block; margin-bottom: 6px; }
+.add-user-grid button { margin: 0; white-space: nowrap; }
+.reset-grid { grid-template-columns: minmax(0, 2fr) minmax(0, 2fr) auto; }
+.add-user .muted-sm { margin: 12px 0 0; }
+@media (max-width: 900px) { .add-user-grid, .reset-grid { grid-template-columns: 1fr; } }
+.signout-row { grid-column: 2; display: flex; gap: 14px; }
+.signout-row .signout { grid-column: auto; }
+.table-wrap + .add-user { margin-top: 20px; }
+
+/* ---------- Sign-in page ---------- */
+.auth { min-height: 100vh; display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); }
+.auth-brand { position: relative; display: flex; align-items: center; padding: 48px; color: #fff; overflow: hidden;
+  background: linear-gradient(145deg, #4F46E5 0%, #4338CA 45%, #0EA5A9 130%); }
+.auth-brand::before, .auth-brand::after { content: ""; position: absolute; border-radius: 50%; background: rgba(255, 255, 255, 0.08); }
+.auth-brand::before { width: 520px; height: 520px; right: -180px; top: -160px; }
+.auth-brand::after { width: 380px; height: 380px; left: -140px; bottom: -150px; }
+.auth-brand-inner { position: relative; max-width: 460px; }
+.auth-logo { display: flex; align-items: center; gap: 12px; font-size: 1.3rem; font-weight: 700; }
+.auth-logo .logo-mark { width: 44px; height: 44px; }
+.auth-brand h1 { margin: 48px 0 14px; font-size: 2.4rem; line-height: 1.15; font-weight: 700; letter-spacing: -0.01em; }
+.auth-lead { margin: 0 0 28px; font-size: 1.05rem; line-height: 1.55; color: rgba(255, 255, 255, 0.85); }
+.auth-points { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
+.auth-points li { display: flex; align-items: center; gap: 12px; font-weight: 500; }
+.auth-tick { display: grid; place-items: center; width: 24px; height: 24px; flex: none; border-radius: 50%; background: rgba(255, 255, 255, 0.2); font-size: 0.8rem; }
+
+.auth-form-side { display: grid; place-items: center; padding: 32px 24px; background: var(--bg); }
+.auth-card { width: 100%; max-width: 400px; }
+.auth-card h2 { margin: 0; font-size: 1.7rem; font-weight: 700; color: #1E293B; }
+.auth-sub { margin: 6px 0 22px; color: var(--muted); }
+.auth-card button[type="submit"] { width: 100%; margin-top: 22px; }
+.auth-mobile-logo { display: none; align-items: center; gap: 10px; margin-bottom: 24px; font-size: 1.2rem; font-weight: 700; color: #1E293B; }
+
+.demo-box { margin-top: 26px; padding: 16px; border: 1px dashed var(--mid); border-radius: 14px; background: var(--white); }
+.demo-title { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; font-size: 0.85rem; font-weight: 700; color: #1E293B; }
+.demo-title span { font-weight: 500; color: var(--muted); font-size: 0.78rem; }
+.demo-list { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 8px; }
+.demo-fill { display: flex; justify-content: space-between; align-items: center; width: 100%; margin: 0; padding: 9px 12px; border: 1px solid var(--line); border-radius: 10px; background: #F8FAFC; color: var(--text); font-weight: 500; font-size: 0.88rem; cursor: pointer; }
+.demo-fill:hover { background: var(--indigo-tint); border-color: var(--indigo); }
+.demo-fill strong { color: var(--indigo); }
+.demo-fill span { color: var(--muted); font-size: 0.8rem; }
+.demo-hint { margin: 10px 0 0; font-size: 0.78rem; color: var(--muted); }
+
+@media (max-width: 860px) {
+  .auth { grid-template-columns: 1fr; }
+  .auth-brand { display: none; }
+  .auth-mobile-logo { display: flex; }
+  .auth-mobile-logo .logo-mark { width: 40px; height: 40px; }
+}
+
+/* ---------- Demo mode setting ---------- */
+.demo-setting { display: flex; align-items: center; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
+.demo-setting-text { flex: 1; min-width: 260px; }
+.demo-setting-text p { margin: 0; }
+.demo-warning { margin: 14px 0 0; }
+.auth-brand h1, .auth-brand .auth-logo { color: #fff; }
+
+/* ---------- Restricted projects ---------- */
+.locked-title { color: var(--muted); font-weight: 600; }
+.project-card .locked-title { display: block; }
+.visibility-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 4px; }
+.viewer-list { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 6px; max-height: 220px; overflow: auto; }
+.viewer-list .check { display: flex; align-items: center; gap: 10px; margin: 0; padding: 7px 10px; border: 1px solid var(--line); border-radius: 10px; font-weight: 500; font-size: 0.9rem; cursor: pointer; }
+.viewer-list input[type="checkbox"] { width: 16px; height: 16px; margin: 0; padding: 0; accent-color: var(--indigo); }
+.viewer-list em { font-style: normal; color: var(--muted); font-size: 0.8rem; }
+.locked-title .icon { width: 15px; height: 15px; vertical-align: -2px; }

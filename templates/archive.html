@@ -1,4 +1,5 @@
 {% extends "app_base.html" %}
+{% from "_icons.html" import icon %}
 {% block title %}Archive · ProjectTracker{% endblock %}
 {% block content %}
 <div class="page-head">
@@ -31,11 +32,15 @@
       <tbody>
         {% for c in cases %}
           <tr>
-            <td class="strong"><a class="row-link" href="{{ url_for('case_detail', case_id=c.id) }}">{{ c.customer_name }}</a></td>
+            <td class="strong">{% if c.hidden %}<span class="locked-title">{{ icon("lock") }} Restricted project</span>{% else %}<a class="row-link" href="{{ url_for('case_detail', case_id=c.id) }}">{{ c.customer_name }}</a>{% endif %}</td>
             <td class="muted-sm">{{ c.type_name or "—" }}</td>
             <td><span class="pill risk-{{ c.risk_rating|lower }}">{{ c.risk_rating }}</span></td>
+            {% if c.hidden %}
+              <td><span class="muted-sm">—</span></td><td><span class="muted-sm">—</span></td>
+            {% else %}
             <td><span class="person"><span class="avatar sm {{ c.owner_id|avatar_class }}">{{ c.owner_initials }}</span>{{ c.owner_name }}</span></td>
             <td><span class="person"><span class="avatar sm {{ c.manager_id|avatar_class }}">{{ c.manager_initials }}</span>{{ c.manager_name }}</span></td>
+            {% endif %}
             <td class="muted-sm">{{ c.due_date|pretty_date }}</td>
             <td>{{ c.finished_on }} <span class="chip due-{{ c.finish_class }}">{{ c.finish_label }}</span></td>
           </tr>

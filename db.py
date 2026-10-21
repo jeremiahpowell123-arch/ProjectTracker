@@ -1,7 +1,8 @@
+import os
 import sqlite3
 from werkzeug.security import generate_password_hash
 
-DB_PATH = "tracker.db"
+DB_PATH = os.environ.get("TRACKER_DB", "tracker.db")
 
 # The first project type, made when the database is new. Administrators can
 # rename it, change its tasks, or add other project types.
@@ -117,6 +118,32 @@ CREATE TABLE IF NOT EXISTS comments (
     archived_by INTEGER REFERENCES users(id)
 );
 
+-- Free-form tags. tag_key is the lowercase form, so "Rush" and "rush" are one tag.
+CREATE TABLE IF NOT EXISTS case_tags (
+    case_id INTEGER NOT NULL REFERENCES cases(id),
+    tag TEXT NOT NULL,
+    tag_key TEXT NOT NULL,
+    added_by INTEGER NOT NULL REFERENCES users(id),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (case_id, tag_key)
+);
+
+-- People who may see the details of a restricted project, besides its owner,
+-- its manager, and the Administrators.
+CREATE TABLE IF NOT EXISTS case_viewers (
+    case_id INTEGER NOT NULL REFERENCES cases(id),
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    added_by INTEGER REFERENCES users(id),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (case_id, user_id)
+);
+
+-- Small on/off settings an Administrator can change, such as demo mode.
+CREATE TABLE IF NOT EXISTS app_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
 -- Only the choices a person has made are stored. No row means the category is on.
 CREATE TABLE IF NOT EXISTS notification_prefs (
     user_id INTEGER NOT NULL REFERENCES users(id),
@@ -148,6 +175,9 @@ def init_db():
     case_columns = {r["name"] for r in conn.execute("PRAGMA table_info(cases)")}
     if "type_id" not in case_columns:
         conn.execute("ALTER TABLE cases ADD COLUMN type_id INTEGER REFERENCES project_types(id)")
+
+    if "restricted" not in {r["name"] for r in conn.execute("PRAGMA table_info(cases)")}:
+        conn.execute("ALTER TABLE cases ADD COLUMN restricted INTEGER NOT NULL DEFAULT 0")
 
     # Archive and out-of-scope columns. Projects that were already finished
     # when this feature arrived are moved to the archive once.

@@ -1,4 +1,5 @@
 {% extends "app_base.html" %}
+{% from "_icons.html" import icon %}
 {% block title %}{% if mine %}My Projects{% else %}All Projects{% endif %} · ProjectTracker{% endblock %}
 {% block content %}
 <div class="page-head">
@@ -17,7 +18,7 @@
   <div class="pills" role="group" aria-label="Filter by status">
     {% for key, label in status_filters %}
       <a class="pill-link {% if status == key %}active{% endif %}"
-         href="{{ url_for('home', status=(key if key != 'all' else None), view=(view if view != 'board' else None), q=(query or None), mine=(1 if mine else None), type=type_id, hide_oos=(1 if hide_oos else None)) }}">
+         href="{{ url_for('home', status=(key if key != 'all' else None), view=(view if view != 'board' else None), q=(query or None), mine=(1 if mine else None), type=type_id, tag=tag_key, hide_oos=(1 if hide_oos else None)) }}">
         {{ label }} <span class="count">{{ counts[key] }}</span>
       </a>
     {% endfor %}
@@ -35,33 +36,44 @@
     {% if query %}<input type="hidden" name="q" value="{{ query }}">{% endif %}
     {% if mine %}<input type="hidden" name="mine" value="1">{% endif %}
     {% if hide_oos %}<input type="hidden" name="hide_oos" value="1">{% endif %}
+    {% if tag_options %}
+      <label class="sr-only" for="tag-select">Tag</label>
+      <select id="tag-select" name="tag" onchange="this.form.submit()">
+        <option value="">All tags</option>
+        {% for t in tag_options %}
+          <option value="{{ t.key }}" {% if t.key == tag_key %}selected{% endif %}>{{ t.name }}</option>
+        {% endfor %}
+      </select>
+    {% endif %}
     <noscript><button class="btn small" type="submit">Apply</button></noscript>
   </form>
   <div class="oos-toggle">
     <span class="muted-sm">Out of scope</span>
     <div class="segmented" role="group" aria-label="Show or hide out-of-scope projects">
       <a class="{% if not hide_oos %}active{% endif %}"
-         href="{{ url_for('home', status=(status if status != 'all' else None), view=(view if view != 'board' else None), q=(query or None), mine=(1 if mine else None), type=type_id) }}">Show{% if oos_count %} ({{ oos_count }}){% endif %}</a>
+         href="{{ url_for('home', status=(status if status != 'all' else None), view=(view if view != 'board' else None), q=(query or None), mine=(1 if mine else None), type=type_id, tag=tag_key) }}">Show{% if oos_count %} ({{ oos_count }}){% endif %}</a>
       <a class="{% if hide_oos %}active{% endif %}"
-         href="{{ url_for('home', status=(status if status != 'all' else None), view=(view if view != 'board' else None), q=(query or None), mine=(1 if mine else None), type=type_id, hide_oos=1) }}">Hide</a>
+         href="{{ url_for('home', status=(status if status != 'all' else None), view=(view if view != 'board' else None), q=(query or None), mine=(1 if mine else None), type=type_id, tag=tag_key, hide_oos=1) }}">Hide</a>
     </div>
   </div>
   <div class="segmented" role="group" aria-label="Choose a view">
     <a class="{% if view == 'board' %}active{% endif %}"
-       href="{{ url_for('home', status=(status if status != 'all' else None), q=(query or None), mine=(1 if mine else None), type=type_id, hide_oos=(1 if hide_oos else None)) }}">Board</a>
+       href="{{ url_for('home', status=(status if status != 'all' else None), q=(query or None), mine=(1 if mine else None), type=type_id, tag=tag_key, hide_oos=(1 if hide_oos else None)) }}">Board</a>
     <a class="{% if view == 'list' %}active{% endif %}"
-       href="{{ url_for('home', view='list', status=(status if status != 'all' else None), q=(query or None), mine=(1 if mine else None), type=type_id, hide_oos=(1 if hide_oos else None)) }}">List</a>
+       href="{{ url_for('home', view='list', status=(status if status != 'all' else None), q=(query or None), mine=(1 if mine else None), type=type_id, tag=tag_key, hide_oos=(1 if hide_oos else None)) }}">List</a>
   </div>
 </div>
 
 {% if not cases %}
   <div class="card empty">
-    {% if status != 'all' or query or mine or type_id or hide_oos %}
+    {% if status != 'all' or query or mine or type_id or tag_key or hide_oos %}
       No projects match these filters.
+    {% elif mine %}
+      No projects are assigned to you yet.
     {% elif has_permission(user, 'create_projects') %}
       No projects yet. Click <strong>New Project</strong> to create the first one.
     {% else %}
-      No projects are assigned to you yet.
+      No projects yet.
     {% endif %}
   </div>
 
@@ -76,8 +88,13 @@
         </header>
         {% for c in col.cases %}
           <article class="project-card">
-            <a class="project-title" href="{{ url_for('case_detail', case_id=c.id) }}">{{ c.customer_name }}</a>
+            {% if c.hidden %}
+              <span class="project-title locked-title">{{ icon("lock") }} Restricted project</span>
+            {% else %}
+              <a class="project-title" href="{{ url_for('case_detail', case_id=c.id) }}">{{ c.customer_name }}</a>
+            {% endif %}
             {% if c.type_name %}<div class="project-type">{{ c.type_name }}</div>{% endif %}
+            {% if c.tags %}<div class="tag-row">{% for t in c.tags %}<a class="tag" href="{{ url_for('home', tag=t.key) }}">{{ t.name }}</a>{% endfor %}</div>{% endif %}
             <div class="project-tags">
               <span class="pill risk-{{ c.risk_rating|lower }}">{{ c.risk_rating }}</span>
               <span class="chip due-{{ c.due_class }}">{{ c.due_label }}</span>
@@ -88,10 +105,12 @@
             {% else %}
               <div class="project-meta">Due {{ c.due_date|pretty_date }} · {{ c.done_stages }} of {{ c.total_stages }} stages</div>
             {% endif %}
+            {% if not c.hidden %}
             <div class="project-foot">
               <span class="avatar sm {{ c.owner_id|avatar_class }}">{{ c.owner_initials }}</span>
               <span>{{ c.owner_name }}</span>
             </div>
+            {% endif %}
           </article>
         {% else %}
           <p class="column-empty">No projects</p>
@@ -112,7 +131,7 @@
       <tbody>
         {% for c in cases %}
           <tr>
-            <td class="strong"><a class="row-link" href="{{ url_for('case_detail', case_id=c.id) }}">{{ c.customer_name }}</a></td>
+            <td class="strong">{% if c.hidden %}<span class="locked-title">{{ icon("lock") }} Restricted project</span>{% else %}<a class="row-link" href="{{ url_for('case_detail', case_id=c.id) }}">{{ c.customer_name }}</a>{% endif %}{% if c.tags %}<div class="tag-row">{% for t in c.tags %}<a class="tag" href="{{ url_for('home', view='list', tag=t.key) }}">{{ t.name }}</a>{% endfor %}</div>{% endif %}</td>
             <td class="muted-sm">{{ c.type_name or "—" }}</td>
             <td><span class="pill risk-{{ c.risk_rating|lower }}">{{ c.risk_rating }}</span></td>
             <td>{{ c.current_stage or "All stages complete" }}</td>
@@ -122,12 +141,17 @@
                 <span class="muted-sm">{{ c.done_stages }} of {{ c.total_stages }}</span>
               </div>
             </td>
+            {% if c.hidden %}
+              <td><span class="muted-sm">—</span></td>
+              <td><span class="muted-sm">—</span></td>
+            {% else %}
             <td>
               <span class="person"><span class="avatar sm {{ c.owner_id|avatar_class }}">{{ c.owner_initials }}</span>{{ c.owner_name }}</span>
             </td>
             <td>
               <span class="person"><span class="avatar sm {{ c.manager_id|avatar_class }}">{{ c.manager_initials }}</span>{{ c.manager_name }}</span>
             </td>
+            {% endif %}
             <td><span class="chip due-{{ c.due_class }}">{{ c.due_label }}</span>{% if c.scope_state == 'pending' %} <span class="chip due-review">Out-of-scope request</span>{% endif %}</td>
           </tr>
         {% endfor %}

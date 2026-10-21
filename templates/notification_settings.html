@@ -8,6 +8,7 @@
 </div>
 
 <form method="post" class="card panel settings-card">
+{{ csrf_field() }}
   {% for key, (label, help) in categories.items() %}
     <div class="settings-row">
       <div>

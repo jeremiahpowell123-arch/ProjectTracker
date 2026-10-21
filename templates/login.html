@@ -2,23 +2,68 @@
 {% from "_icons.html" import logo %}
 {% block title %}Sign in · ProjectTracker{% endblock %}
 {% block body %}
-<main class="login-wrap">
-  <section class="login-card">
-    <div class="login-brand">{{ logo() }}<span>ProjectTracker</span></div>
-    <p class="subtitle">Projects. Progress. Together.</p>
-    {% with messages = get_flashed_messages() %}
-      {% for message in messages %}
-        <div class="alert">{{ message }}</div>
-      {% endfor %}
-    {% endwith %}
-    <form method="post">
-      <label for="username">Username</label>
-      <input id="username" name="username" autocomplete="username" required autofocus>
-      <label for="password">Password</label>
-      <input id="password" name="password" type="password" autocomplete="current-password" required>
-      <button type="submit">Sign in</button>
-    </form>
-    <p class="demo-note">Demo accounts: admin, manager, analyst. Password: demo1234</p>
+<main class="auth">
+  <section class="auth-brand" aria-label="About ProjectTracker">
+    <div class="auth-brand-inner">
+      <div class="auth-logo">{{ logo() }}<span>ProjectTracker</span></div>
+      <h1>Projects. Progress. Together.</h1>
+      <p class="auth-lead">Move every project through its stages, keep a clear record of who changed what, and never lose track of what is due next.</p>
+      <ul class="auth-points">
+        <li><span class="auth-tick">&#10003;</span>Stage-by-stage progress on a shared board</li>
+        <li><span class="auth-tick">&#10003;</span>Manager overrides with a written reason</li>
+        <li><span class="auth-tick">&#10003;</span>Automatic archive and a full activity log</li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="auth-form-side">
+    <div class="auth-card">
+      <div class="auth-mobile-logo">{{ logo() }}<span>ProjectTracker</span></div>
+      <h2>Welcome back</h2>
+      <p class="auth-sub">Sign in to continue to your projects.</p>
+
+      {% with messages = get_flashed_messages() %}
+        {% for message in messages %}
+          <div class="alert">{{ message }}</div>
+        {% endfor %}
+      {% endwith %}
+
+      <form method="post">
+{{ csrf_field() }}
+        <label for="username">Username</label>
+        <input id="username" name="username" autocomplete="username" autocapitalize="none" required autofocus>
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required>
+        <button type="submit">Sign in</button>
+      </form>
+
+      {% if demo %}
+        <div class="demo-box">
+          <div class="demo-title">Demo accounts <span>Password: demo1234</span></div>
+          <ul class="demo-list">
+            {% for username, role in [('admin', 'Administrator'), ('manager', 'Manager'), ('analyst', 'Contributor')] %}
+              <li>
+                <button type="button" class="demo-fill" data-user="{{ username }}">
+                  <strong>{{ username }}</strong><span>{{ role }}</span>
+                </button>
+              </li>
+            {% endfor %}
+          </ul>
+          <p class="demo-hint">Click an account to fill in the form.</p>
+        </div>
+      {% endif %}
+    </div>
   </section>
 </main>
+{% if demo %}
+<script>
+  document.querySelectorAll(".demo-fill").forEach(function (b) {
+    b.addEventListener("click", function () {
+      document.getElementById("username").value = b.dataset.user;
+      document.getElementById("password").value = "demo1234";
+      document.getElementById("password").focus();
+    });
+  });
+</script>
+{% endif %}
 {% endblock %}

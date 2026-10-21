@@ -15,6 +15,7 @@
 {% set selected_type = form.get('type_id') or (types[0]['id']|string) %}
 <div class="form-layout">
   <form method="post" class="card form-card">
+{{ csrf_field() }}
     <label for="customer_name">Project name <span class="hint">(fictional names only in this demo)</span></label>
     <input id="customer_name" name="customer_name" value="{{ form.get('customer_name', '') }}" required>
 

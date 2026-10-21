@@ -6,9 +6,64 @@
   <p class="muted">Everyone gets the abilities that come with their role. Switch extra permissions on for individual people, such as a team lead who can create projects, then click Save.</p>
 </div>
 
+<section class="card panel add-user">
+  <h2>Demo mode</h2>
+  <form method="post" action="{{ url_for('set_demo_mode') }}" class="demo-setting">
+{{ csrf_field() }}
+    <div class="demo-setting-text">
+      <p class="muted-sm">When On, the sign-in page lists the demo usernames and the demo password. Turn it Off before sharing the app with anyone who should not see them.</p>
+    </div>
+    <div class="seg toggle" role="radiogroup" aria-label="Demo mode">
+      <label><input type="radio" name="demo_mode" value="off" {% if not demo_on %}checked{% endif %}><span>Off</span></label>
+      <label><input type="radio" name="demo_mode" value="on" {% if demo_on %}checked{% endif %}><span>On</span></label>
+    </div>
+    <button type="submit" class="btn small">Save</button>
+  </form>
+  {% if demo_password_users %}
+    <div class="banner banner-pending demo-warning">
+      <strong>{{ demo_password_users|length }} account{{ '' if demo_password_users|length == 1 else 's' }} still use the demo password:</strong>
+      {{ demo_password_users|join(', ') }}. Hiding the details does not change these passwords. Reset them below before real use.
+    </div>
+  {% endif %}
+</section>
+
+<section class="card panel add-user">
+  <h2>Add a person</h2>
+  <form method="post" action="{{ url_for('create_user') }}" class="add-user-grid">
+{{ csrf_field() }}
+    <div>
+      <label for="nu-name">Full name</label>
+      <input id="nu-name" name="name" value="{{ form.get('name', '') }}" maxlength="60" required>
+    </div>
+    <div>
+      <label for="nu-username">Username</label>
+      <input id="nu-username" name="username" value="{{ form.get('username', '') }}" maxlength="30" autocapitalize="none" required>
+    </div>
+    <div>
+      <label for="nu-role">Role</label>
+      <select id="nu-role" name="role" required>
+        {% for value, label in [('Analyst', 'Contributor'), ('Manager', 'Manager'), ('Administrator', 'Administrator')] %}
+          <option value="{{ value }}" {% if form.get('role', 'Analyst') == value %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div>
+      <label for="nu-initials">Initials <span class="hint">(optional)</span></label>
+      <input id="nu-initials" name="initials" value="{{ form.get('initials', '') }}" maxlength="3" placeholder="Auto">
+    </div>
+    <div>
+      <label for="nu-password">Temporary password</label>
+      <input id="nu-password" name="password" type="password" autocomplete="new-password" minlength="8" required>
+    </div>
+    <button type="submit">Add person</button>
+  </form>
+  <p class="muted-sm">Choose a role, then use the table below for extra permissions. Share the username and temporary password with them directly.</p>
+</section>
+
 {# The empty forms come first so each switch is tied to its person's form as the page loads. #}
 {% for row in rows %}
-  <form method="post" id="perm-{{ row.user['id'] }}" action="{{ url_for('update_permissions', person_id=row.user['id']) }}"></form>
+  <form method="post" id="perm-{{ row.user['id'] }}" action="{{ url_for('update_permissions', person_id=row.user['id']) }}">
+{{ csrf_field() }}</form>
 {% endfor %}
 
 <div class="card table-wrap">
@@ -60,6 +115,25 @@
     </tbody>
   </table>
 </div>
+
+<section class="card panel add-user">
+  <h2>Reset a password</h2>
+  <p class="muted-sm">For someone who is locked out. People can change their own password from the link under their name in the sidebar.</p>
+  <form method="post" action="{{ url_for('reset_password') }}" class="add-user-grid reset-grid">
+{{ csrf_field() }}
+    <div>
+      <label for="rp-person">Person</label>
+      <select id="rp-person" name="person" required>
+        {% for row in rows %}<option value="{{ row.user['id'] }}">{{ row.user['name'] }} ({{ row.user['username'] }})</option>{% endfor %}
+      </select>
+    </div>
+    <div>
+      <label for="rp-password">New password</label>
+      <input id="rp-password" name="password" type="password" autocomplete="new-password" minlength="8" required>
+    </div>
+    <button type="submit" class="secondary">Reset password</button>
+  </form>
+</section>
 
 <p class="muted-sm perm-note">
   {% for key, (label, help) in permissions.items() %}<strong>{{ label }}:</strong> {{ help }} {% endfor %}

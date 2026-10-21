@@ -11,7 +11,7 @@
       <a class="nav-link {% if active_nav == 'archive' %}active{% endif %}" href="{{ url_for('archive') }}">{{ icon('archive') }}<span>Archive</span></a>
       {% if user["role"] == "Administrator" %}
         <div class="nav-label">Admin</div>
-        <a class="nav-link {% if active_nav == 'workflows' %}active{% endif %}" href="{{ url_for('admin_workflows') }}">{{ icon('layers') }}<span>Workflows</span></a>        <span class="nav-link disabled">{{ icon('tag') }}<span>Tags</span><em>Soon</em></span>
+        <a class="nav-link {% if active_nav == 'workflows' %}active{% endif %}" href="{{ url_for('admin_workflows') }}">{{ icon('layers') }}<span>Workflows</span></a>
         <a class="nav-link {% if active_nav == 'users' %}active{% endif %}" href="{{ url_for('admin_users') }}">{{ icon('users') }}<span>Users</span></a>
       {% endif %}
     </nav>
@@ -22,7 +22,7 @@
         <strong>{{ user["name"] }}</strong>
         <span>{{ user|role_display }}</span>
       </div>
-      <a class="signout" href="{{ url_for('logout') }}">Sign out</a>
+      <span class="signout-row"><a class="signout" href="{{ url_for('change_password') }}">Password</a><a class="signout" href="{{ url_for('logout') }}">Sign out</a></span>
     </div>
   </aside>
 
@@ -34,7 +34,7 @@
         {% if request.args.get('view') %}<input type="hidden" name="view" value="{{ request.args.get('view') }}">{% endif %}
         {% if request.args.get('mine') %}<input type="hidden" name="mine" value="{{ request.args.get('mine') }}">{% endif %}
       </form>
-            <div class="topbar-actions">
+      <div class="topbar-actions">
       {% set unread_total = bell_count(user) %}
       <a class="bell {% if active_nav == 'inbox' %}active{% endif %}" href="{{ url_for('notifications') }}" aria-label="Notifications{% if unread_total %}, {{ unread_total }} waiting{% endif %}">
         {{ icon('bell') }}{% if unread_total %}<span class="bell-badge">{{ unread_total if unread_total < 100 else '99+' }}</span>{% endif %}

@@ -8,6 +8,7 @@
   <span class="pill risk-{{ case.risk_rating|lower }}">{{ case.risk_rating }}</span>
   <span class="chip due-{{ case.due_class }}">{{ case.due_label }}</span>
   {% if case.type_name %}<span class="type-tag">{{ case.type_name }}</span>{% endif %}
+  {% if case.restricted %}<span class="chip due-outofscope">Restricted</span>{% endif %}
 </div>
 
 {% if case.archived_at %}
@@ -46,6 +47,34 @@
   </div>
 </div>
 
+<section class="card panel tags-panel" id="tags">
+  <div class="tags-line">
+    <strong class="tags-label">Tags</strong>
+    {% for t in tags %}
+      {% if can_collaborate %}
+      <form method="post" action="{{ url_for('remove_tag', case_id=case.id) }}" class="tag-form">
+{{ csrf_field() }}
+        <input type="hidden" name="tag_key" value="{{ t.key }}">
+        <span class="tag tag-edit">{{ t.name }}<button type="submit" class="tag-x" aria-label="Remove tag {{ t.name }}">×</button></span>
+      </form>
+      {% else %}
+        <span class="tag">{{ t.name }}</span>
+      {% endif %}
+    {% else %}
+      <span class="muted-sm">No tags yet.</span>
+    {% endfor %}
+    {% if can_collaborate and tags|length < max_tags %}
+      <form method="post" action="{{ url_for('add_tag', case_id=case.id) }}" class="tag-add">
+{{ csrf_field() }}
+        <label class="sr-only" for="tag-input">Add a tag</label>
+        <input id="tag-input" name="tag" list="tag-suggestions" maxlength="24" placeholder="Add a tag" autocomplete="off">
+        <datalist id="tag-suggestions">{% for s in tag_suggestions %}<option value="{{ s.name }}">{% endfor %}</datalist>
+        <button type="submit" class="btn small">Add</button>
+      </form>
+    {% endif %}
+  </div>
+</section>
+
 <div class="detail-layout">
   <div class="main-stack">
   <section class="card panel">
@@ -71,6 +100,7 @@
           {% if can_edit and not locked %}
             <form method="post" class="status-form"
                   action="{{ url_for('update_stage_status', case_id=case.id, stage_id=s['id']) }}">
+{{ csrf_field() }}
               <select name="status" class="status-select status-{{ s['status']|lower|replace(' ', '-') }}"
                       aria-label="Status for {{ s['name'] }}" onchange="this.form.requestSubmit()">
                 {% for st in statuses %}
@@ -104,11 +134,16 @@
       {% endif %}
     </div>
 
-    <form method="post" action="{{ url_for('add_comment', case_id=case.id) }}" class="comment-form">
+    {% if can_collaborate %}
+  <form method="post" action="{{ url_for('add_comment', case_id=case.id) }}" class="comment-form">
+{{ csrf_field() }}
       <label class="sr-only" for="comment-body">Add a comment</label>
       <textarea id="comment-body" name="body" maxlength="1000" required placeholder="Add a comment. Your initials are added automatically."></textarea>
       <button type="submit">Post comment</button>
     </form>
+  {% else %}
+  <p class="muted-sm">Only the owner, the manager, and Administrators can comment on a project.</p>
+  {% endif %}
 
     {% if comments %}
       <ul class="comment-list">
@@ -125,6 +160,7 @@
               <div class="comment-body">{{ m['body'] }}</div>
               {% if m['author_id'] == user['id'] or can_override %}
                 <form method="post" action="{{ url_for('archive_comment', case_id=case.id, comment_id=m['id']) }}" class="comment-action">
+{{ csrf_field() }}
                   {% if show_archived_comments %}<input type="hidden" name="show" value="all">{% endif %}
                   {% if m['archived_at'] %}
                     <button type="submit" name="action" value="restore" class="link-button">Restore</button>
@@ -149,6 +185,7 @@
       <h2>Out-of-scope request</h2>
       <p class="muted-sm">{{ case.scope_actor_name }} asked to mark this project out of scope. Approving freezes the stages.</p>
       <form method="post" action="{{ url_for('scope_decide', case_id=case.id) }}" class="control-form">
+{{ csrf_field() }}
         <label for="sd-reason">Note <span class="hint">(required to decline)</span></label>
         <textarea id="sd-reason" name="reason" maxlength="500"></textarea>
         <div class="btn-row">
@@ -165,6 +202,7 @@
     <p class="muted-sm">Use these when the owner is unavailable. A reason is required and is saved in the activity log.</p>
 
     <form method="post" action="{{ url_for('override_status', case_id=case.id) }}" class="control-form">
+{{ csrf_field() }}
       <h3>Override a stage status</h3>
       <label for="ov-stage">Stage</label>
       <select id="ov-stage" name="stage_id" required>
@@ -182,6 +220,7 @@
     </form>
 
     <form method="post" action="{{ url_for('reassign_owner', case_id=case.id) }}" class="control-form">
+{{ csrf_field() }}
       <h3>Reassign the owner</h3>
       <label for="ra-owner">New owner</label>
       <select id="ra-owner" name="new_owner_id" required>
@@ -196,12 +235,41 @@
   </section>
   {% endif %}
 
+  {% if can_override %}
+  <section class="card panel controls">
+    <h2>Visibility</h2>
+    <p class="muted-sm">Everyone can see this project by default. Restrict it to hide its name, people, and details from everyone except its owner, its manager, Administrators, and the people you choose below.</p>
+    <form method="post" action="{{ url_for('set_visibility', case_id=case.id) }}" class="control-form">
+{{ csrf_field() }}
+      <div class="visibility-row">
+        <strong>Restricted</strong>
+        <div class="seg toggle" role="radiogroup" aria-label="Restricted">
+          <label><input type="radio" name="restricted" value="off" {% if not case.restricted %}checked{% endif %}><span>Off</span></label>
+          <label><input type="radio" name="restricted" value="on" {% if case.restricted %}checked{% endif %}><span>On</span></label>
+        </div>
+      </div>
+      <label>People who can see the details</label>
+      {% if viewer_choices %}
+        <ul class="viewer-list">
+          {% for v in viewer_choices %}
+            <li><label class="check"><input type="checkbox" name="viewer" value="{{ v.id }}" {% if v.checked %}checked{% endif %}><span>{{ v.name }} <em>{{ v.role|role_label }}</em></span></label></li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <p class="muted-sm">There is no one else to choose from yet.</p>
+      {% endif %}
+      <button type="submit" class="secondary">Save visibility</button>
+    </form>
+  </section>
+  {% endif %}
+
   {% if case.archived_at %}
     {% if can_override %}
     <section class="card panel controls">
       <h2>Reopen project</h2>
       <p class="muted-sm">Move one stage back to In progress. The project returns to the board and the reason is saved in the activity log.</p>
       <form method="post" action="{{ url_for('reopen_case', case_id=case.id) }}" class="control-form">
+{{ csrf_field() }}
         <label for="ro-stage">Stage to reopen</label>
         <select id="ro-stage" name="stage_id" required>
           {% for s in stages %}
@@ -221,6 +289,7 @@
       <h2>Out-of-scope request</h2>
       <p class="muted-sm">Waiting for {{ case.manager_name }} to decide. You can take the request back.</p>
       <form method="post" action="{{ url_for('scope_withdraw', case_id=case.id) }}" class="control-form">
+{{ csrf_field() }}
         <button type="submit" class="secondary">Withdraw request</button>
       </form>
     </section>
@@ -232,6 +301,7 @@
       <h2>Return to scope</h2>
       <p class="muted-sm">The stages can be changed again. The reason is saved in the activity log.</p>
       <form method="post" action="{{ url_for('scope_return', case_id=case.id) }}" class="control-form">
+{{ csrf_field() }}
         <label for="sr-reason">Reason</label>
         <textarea id="sr-reason" name="reason" maxlength="500" required placeholder="For example: Customer re-engaged"></textarea>
         <button type="submit">Return to scope</button>
@@ -248,6 +318,7 @@
         <p class="muted-sm">{{ case.manager_name }} will be asked to approve. You can keep working until they decide.</p>
       {% endif %}
       <form method="post" action="{{ url_for('scope_out', case_id=case.id) }}" class="control-form">
+{{ csrf_field() }}
         <label for="so-reason">Reason</label>
         <textarea id="so-reason" name="reason" maxlength="500" required placeholder="For example: Customer withdrew the application"></textarea>
         <button type="submit" class="secondary">{% if can_override %}Mark out of scope{% else %}Send request{% endif %}</button>
@@ -262,7 +333,8 @@
         'override_status': 'Override', 'reassign': 'Reassigned',
         'scope_request': 'Request', 'scope_approve': 'Approved', 'scope_decline': 'Declined',
         'scope_withdraw': 'Withdrawn', 'scope_out': 'Out of scope', 'scope_return': 'In scope',
-        'archived': 'Archived', 'reopen': 'Reopened'
+        'archived': 'Archived', 'reopen': 'Reopened',
+        'tag_add': 'Tagged', 'tag_remove': 'Untagged', 'visibility': 'Access'
       } %}
       <ul class="activity">
         {% for a in activity %}

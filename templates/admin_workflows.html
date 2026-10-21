@@ -7,6 +7,7 @@
 </div>
 
 <form method="post" action="{{ url_for('create_type') }}" class="card add-type">
+{{ csrf_field() }}
   <label for="new-type-name">New project type</label>
   <div class="inline-form">
     <input id="new-type-name" name="name" maxlength="80" placeholder="For example: Vendor Onboarding" required>
@@ -18,12 +19,14 @@
 <section class="card wf-type" id="type-{{ t['id'] }}">
   <header class="wf-head">
     <form method="post" action="{{ url_for('rename_type', type_id=t['id']) }}" class="inline-form grow">
+{{ csrf_field() }}
       <input name="name" value="{{ t['name'] }}" maxlength="80" required aria-label="Project type name">
       <button class="btn small" type="submit">Rename</button>
     </form>
     <span class="muted-sm">{{ t['case_count'] }} project{{ '' if t['case_count'] == 1 else 's' }} so far</span>
     {% if types|length > 1 %}
       <form method="post" action="{{ url_for('remove_type', type_id=t['id']) }}">
+{{ csrf_field() }}
         <button class="btn small secondary" type="submit">Remove type</button>
       </form>
     {% endif %}
@@ -34,15 +37,18 @@
       <li class="wf-task">
         <div class="wf-move">
           <form method="post" action="{{ url_for('move_task', task_id=k['id']) }}">
+{{ csrf_field() }}
             <input type="hidden" name="direction" value="up">
             <button class="icon-btn" type="submit" aria-label="Move {{ k['name'] }} up" {% if loop.first %}disabled{% endif %}>↑</button>
           </form>
           <form method="post" action="{{ url_for('move_task', task_id=k['id']) }}">
+{{ csrf_field() }}
             <input type="hidden" name="direction" value="down">
             <button class="icon-btn" type="submit" aria-label="Move {{ k['name'] }} down" {% if loop.last %}disabled{% endif %}>↓</button>
           </form>
         </div>
         <form class="wf-edit" method="post" action="{{ url_for('update_task', task_id=k['id']) }}">
+{{ csrf_field() }}
           <input name="name" value="{{ k['name'] }}" maxlength="80" required aria-label="Task name">
           <span class="muted-sm">High priority</span>
           <div class="seg toggle" role="radiogroup" aria-label="High priority for {{ k['name'] }}">
@@ -52,6 +58,7 @@
           <button class="btn small" type="submit">Save</button>
         </form>
         <form method="post" action="{{ url_for('remove_task', task_id=k['id']) }}">
+{{ csrf_field() }}
           <button class="btn small secondary" type="submit">Remove</button>
         </form>
       </li>
@@ -61,6 +68,7 @@
   </ol>
 
   <form method="post" action="{{ url_for('add_task', type_id=t['id']) }}" class="wf-add">
+{{ csrf_field() }}
     <input name="name" maxlength="80" placeholder="Add a task, for example: Sent to QC" required aria-label="New task name">
     <span class="muted-sm">High priority</span>
     <div class="seg toggle" role="radiogroup" aria-label="High priority for the new task">
@@ -78,6 +86,7 @@
           <li>
             <span>{{ k['name'] }}</span>
             <form method="post" action="{{ url_for('restore_task', task_id=k['id']) }}">
+{{ csrf_field() }}
               <button class="btn small secondary" type="submit">Restore</button>
             </form>
           </li>
@@ -96,6 +105,7 @@
         <li>
           <span>{{ t['name'] }}</span>
           <form method="post" action="{{ url_for('restore_type', type_id=t['id']) }}">
+{{ csrf_field() }}
             <button class="btn small secondary" type="submit">Restore</button>
           </form>
         </li>

@@ -11,6 +11,7 @@
   <div class="inbox-actions">
     {% if unread %}
       <form method="post" action="{{ url_for('read_all_notifications') }}">
+{{ csrf_field() }}
         <button class="btn small secondary" type="submit">Mark all read</button>
       </form>
     {% endif %}

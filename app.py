@@ -1,15 +1,56 @@
+import hmac
+import os
+import re
+import secrets
 from datetime import date, datetime, timezone
 from functools import wraps
 
 from flask import (
     Flask, abort, flash, redirect, render_template, request, session, url_for,
 )
-from werkzeug.security import check_password_hash
+from markupsafe import Markup
+from werkzeug.security import check_password_hash, generate_password_hash
 
 from db import get_db, init_db
 
 app = Flask(__name__)
-app.secret_key = "demo-only-change-before-real-use"
+# Signs the login cookie. Set a long random SECRET_KEY in the environment for real use.
+# The fallback keeps the demo working, but anyone who reads the code knows it.
+app.secret_key = os.environ.get("SECRET_KEY", "demo-only-change-before-real-use")
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,   # page scripts cannot read the login cookie
+    SESSION_COOKIE_SAMESITE="Lax",  # the cookie is not sent on cross-site form posts
+    SESSION_COOKIE_SECURE=os.environ.get("COOKIE_SECURE") == "1",  # set to 1 behind HTTPS
+)
+
+
+# ---------- CSRF protection ----------
+# Every form carries a secret token that is tied to the signed-in browser session.
+# A page on another site cannot read it, so it cannot submit a valid form for you.
+app.config.setdefault("CSRF_ENABLED", True)
+
+
+def csrf_token():
+    if "csrf_token" not in session:
+        session["csrf_token"] = secrets.token_urlsafe(32)
+    return session["csrf_token"]
+
+
+@app.template_global("csrf_field")
+def csrf_field():
+    return Markup('<input type="hidden" name="csrf_token" value="%s">') % csrf_token()
+
+
+@app.before_request
+def check_csrf():
+    if not app.config["CSRF_ENABLED"] or request.method in ("GET", "HEAD", "OPTIONS"):
+        return None
+    sent = request.form.get("csrf_token", "")
+    expected = session.get("csrf_token", "")
+    if expected and hmac.compare_digest(sent, expected):
+        return None
+    flash("Your session expired or the form was out of date. Please try again.", "error")
+    return redirect(url_for("login") if request.endpoint == "login" else url_for("home"))
 
 RISK_LEVELS = ["Low", "Medium", "High"]
 STATUSES = ["Not started", "In progress", "Complete"]
@@ -295,16 +336,52 @@ def bell_count(user):
     return unread + waiting
 
 
+def is_involved(user, case):
+    """Administrators, and the project's owner and manager, always see a project."""
+    return user["role"] == "Administrator" or user["id"] in (case["owner_id"], case["manager_id"])
+
+
+def allowed_viewer_ids(conn, user):
+    """Ids of restricted projects this person was given access to."""
+    return {r["case_id"] for r in conn.execute(
+        "SELECT case_id FROM case_viewers WHERE user_id = ?", (user["id"],))}
+
+
+def hides_details(case, user, allowed_ids):
+    """True when a restricted project's details must be hidden from this person."""
+    return bool(case["restricted"]) and not is_involved(user, case) and case["id"] not in allowed_ids
+
+
+def redact(case):
+    """What someone without access sees of a restricted project.
+
+    The name, people, type, and tags are hidden. Risk, due date, progress, and the
+    current stage stay visible, so the board and its counts still add up.
+    """
+    case["hidden"] = True
+    case["customer_name"] = "Restricted project"
+    case["owner_name"] = case["manager_name"] = "Restricted"
+    case["owner_initials"] = case["manager_initials"] = ""
+    case["type_name"] = None
+    case["tags"] = []
+    return case
+
+
 def get_case_for(conn, user, case_id):
-    """Return the project if this person may see it, otherwise None."""
+    """Return the project if this person may see its details, otherwise None."""
     row = conn.execute(CASE_QUERY + " WHERE c.id = ?", (case_id,)).fetchone()
     if row is None:
         return None
-    if user["role"] != "Administrator" and user["id"] not in (
-        row["owner_id"], row["manager_id"]
-    ):
+    case = due_info(row)
+    if hides_details(case, user, allowed_viewer_ids(conn, user)):
         return None
-    return due_info(row)
+    case["hidden"] = False
+    return case
+
+
+def can_collaborate(user, case):
+    """Comments and tags are for the people working the project. Everyone else reads."""
+    return is_involved(user, case)
 
 
 def can_edit(user, case):
@@ -378,6 +455,50 @@ def maybe_archive(conn, case_id, actor_id):
     return True
 
 
+MAX_TAG_LENGTH = 24
+MAX_TAGS = 8
+TAG_PATTERN = re.compile(r"^\w[\w .&/-]*$")
+
+
+def clean_tag(text):
+    """Tidy a typed tag. Returns "" when it isn't usable."""
+    tag = " ".join(text.replace("#", " ").split())
+    if not tag or len(tag) > MAX_TAG_LENGTH or not TAG_PATTERN.match(tag):
+        return ""
+    return tag
+
+
+def tags_by_case(conn, case_ids):
+    """Map each project id to its tags, oldest first."""
+    found = {case_id: [] for case_id in case_ids}
+    if not found:
+        return found
+    marks = ",".join("?" for _ in found)
+    for r in conn.execute(
+        f"SELECT case_id, tag, tag_key FROM case_tags WHERE case_id IN ({marks}) "
+        "ORDER BY created_at, tag_key",
+        list(found),
+    ):
+        found[r["case_id"]].append({"name": r["tag"], "key": r["tag_key"]})
+    return found
+
+
+def visible_tag_options(conn, user):
+    """Every distinct tag on projects whose details this person can see."""
+    sql = "SELECT t.tag, t.tag_key FROM case_tags t JOIN cases c ON c.id = t.case_id"
+    args = ()
+    if user["role"] != "Administrator":
+        sql += (" WHERE c.restricted = 0 OR c.owner_id = ? OR c.manager_id = ? "
+                "OR c.id IN (SELECT case_id FROM case_viewers WHERE user_id = ?)")
+        args = (user["id"], user["id"], user["id"])
+    options = {}
+    for r in conn.execute(sql + " ORDER BY t.created_at", args):
+        options.setdefault(r["tag_key"], r["tag"])
+    return sorted(
+        ({"key": k, "name": v} for k, v in options.items()), key=lambda o: o["key"]
+    )
+
+
 MAX_REASON = 500
 
 
@@ -444,19 +565,17 @@ def home():
     mine = request.args.get("mine") == "1"
     type_arg = request.args.get("type", "")
     hide_oos = request.args.get("hide_oos") == "1"
+    tag_arg = request.args.get("tag", "").strip().lower()
 
     conn = get_db()
-    if user["role"] == "Administrator":
-        rows = conn.execute(
-            CASE_QUERY + " WHERE c.archived_at IS NULL ORDER BY c.due_date"
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            CASE_QUERY + " WHERE c.archived_at IS NULL "
-            "AND (c.owner_id = ? OR c.manager_id = ?) ORDER BY c.due_date",
-            (user["id"], user["id"]),
-        ).fetchall()
+    rows = conn.execute(
+        CASE_QUERY + " WHERE c.archived_at IS NULL ORDER BY c.due_date"
+    ).fetchall()
+    allowed_ids = allowed_viewer_ids(conn, user)
     active_types = active_types_with_tasks(conn)
+    tag_map = tags_by_case(conn, [r["id"] for r in rows])
+    tag_options = visible_tag_options(conn, user)
+    tag_key = tag_arg if tag_arg in {t["key"] for t in tag_options} else None
 
     # The type filter offers active types, plus any removed type a visible project still uses.
     type_options = [{"id": t["id"], "name": t["name"]} for t in active_types]
@@ -488,6 +607,11 @@ def home():
     conn.close()
 
     cases = [due_info(row) for row in rows]
+    for c in cases:
+        c["tags"] = tag_map.get(c["id"], [])
+        c["hidden"] = False
+        if hides_details(c, user, allowed_ids):
+            redact(c)
 
     # Out-of-scope requests this person can approve. Always shown, whatever the filters.
     needs_approval = [
@@ -498,6 +622,8 @@ def home():
 
     if type_id is not None:
         cases = [c for c in cases if c["type_id"] == type_id]
+    if tag_key:
+        cases = [c for c in cases if any(t["key"] == tag_key for t in c["tags"])]
     if mine:
         cases = [c for c in cases if user["id"] in (c["owner_id"], c["manager_id"])]
     if query:
@@ -526,6 +652,8 @@ def home():
         mine=mine,
         type_id=type_id,
         type_options=type_options,
+        tag_options=tag_options,
+        tag_key=tag_key,
         hide_oos=hide_oos,
         oos_count=oos_count,
         needs_approval=needs_approval,
@@ -637,6 +765,9 @@ def case_detail(case_id):
         "SELECT id, name, role FROM users WHERE id NOT IN (?, ?) ORDER BY name",
         (case["owner_id"], case["manager_id"]),
     ).fetchall()
+    tags = tags_by_case(conn, [case_id])[case_id]
+    tag_suggestions = [t for t in visible_tag_options(conn, user)
+                       if t["key"] not in {x["key"] for x in tags}]
     show_archived = request.args.get("comments") == "all"
     comments = conn.execute(
         "SELECT m.*, u.name AS author_name, u.initials AS author_initials, "
@@ -651,6 +782,18 @@ def case_detail(case_id):
         "SELECT COUNT(*) FROM comments WHERE case_id = ? AND archived_at IS NOT NULL",
         (case_id,),
     ).fetchone()[0]
+    # People who can be given access to a restricted project. The owner, the manager,
+    # and Administrators always have it, so they are not listed.
+    viewer_ids = {r["user_id"] for r in conn.execute(
+        "SELECT user_id FROM case_viewers WHERE case_id = ?", (case_id,))}
+    viewer_choices = [
+        {"id": r["id"], "name": r["name"], "role": r["role"], "checked": r["id"] in viewer_ids}
+        for r in conn.execute(
+            "SELECT id, name, role FROM users WHERE role != 'Administrator' "
+            "AND id NOT IN (?, ?) ORDER BY name",
+            (case["owner_id"], case["manager_id"]),
+        )
+    ]
     conn.close()
 
     return render_template(
@@ -660,6 +803,11 @@ def case_detail(case_id):
         stages=stages,
         activity=activity,
         comments=comments,
+        tags=tags,
+        tag_suggestions=tag_suggestions,
+        viewer_choices=viewer_choices,
+        can_collaborate=can_collaborate(user, case),
+        max_tags=MAX_TAGS,
         archived_comment_count=archived_comment_count,
         show_archived_comments=show_archived,
         statuses=STATUSES,
@@ -1038,14 +1186,67 @@ def reopen_case(case_id):
 MAX_COMMENT = 1000
 
 
-@app.route("/cases/<int:case_id>/comments", methods=["POST"])
-def add_comment(case_id):
-    """Anyone who can see a project can comment. Their initials are stamped automatically."""
+@app.route("/cases/<int:case_id>/visibility", methods=["POST"])
+def set_visibility(case_id):
+    """A project's manager or an Administrator restricts a project and picks who may see it."""
     user = current_user()
     if user is None:
         return redirect(url_for("login"))
     conn = get_db()
     case = load_case_or_404(conn, user, case_id)
+    if not can_override(user, case):
+        conn.close()
+        abort(403)
+
+    restricted = 1 if request.form.get("restricted") == "on" else 0
+    eligible = {
+        r["id"]: r["name"] for r in conn.execute(
+            "SELECT id, name FROM users WHERE role != 'Administrator' AND id NOT IN (?, ?)",
+            (case["owner_id"], case["manager_id"]),
+        )
+    }
+    chosen = {int(v) for v in request.form.getlist("viewer") if v.isdigit() and int(v) in eligible}
+    current = {r["user_id"] for r in conn.execute(
+        "SELECT user_id FROM case_viewers WHERE case_id = ?", (case_id,))}
+
+    if restricted == case["restricted"] and chosen == current:
+        flash("No changes to save.", "error")
+        conn.close()
+        return back_to_case(case_id)
+
+    conn.execute("UPDATE cases SET restricted = ? WHERE id = ?", (restricted, case_id))
+    conn.execute("DELETE FROM case_viewers WHERE case_id = ?", (case_id,))
+    for uid in sorted(chosen):
+        conn.execute(
+            "INSERT INTO case_viewers (case_id, user_id, added_by) VALUES (?, ?, ?)",
+            (case_id, uid, user["id"]),
+        )
+    names = ", ".join(sorted(eligible[u] for u in chosen)) or "no one else"
+    if restricted:
+        detail = f"the project as restricted. Details are visible to: {names}"
+    else:
+        detail = "the restriction on the project, so everyone can see its details"
+    log_history(conn, case_id, user["id"], "visibility", detail)
+    if restricted:
+        notify(conn, chosen - current, case_id, user["id"], "assigned",
+               f'{user["name"]} gave you access to {case["customer_name"]}')
+    conn.commit()
+    conn.close()
+    flash("Visibility saved.", "success")
+    return back_to_case(case_id)
+
+
+@app.route("/cases/<int:case_id>/comments", methods=["POST"])
+def add_comment(case_id):
+    """The owner, manager, and Administrators can comment. Initials are stamped automatically."""
+    user = current_user()
+    if user is None:
+        return redirect(url_for("login"))
+    conn = get_db()
+    case = load_case_or_404(conn, user, case_id)
+    if not can_collaborate(user, case):
+        conn.close()
+        abort(403)
     body = request.form.get("body", "").strip()[:MAX_COMMENT]
     if not body:
         flash("Write a comment first.", "error")
@@ -1097,6 +1298,71 @@ def archive_comment(case_id, comment_id):
         "case_detail", case_id=case_id,
         comments=("all" if request.form.get("show") == "all" else None),
     ))
+
+
+@app.route("/cases/<int:case_id>/tags", methods=["POST"])
+def add_tag(case_id):
+    """The owner, manager, and Administrators can tag a project."""
+    user = current_user()
+    if user is None:
+        return redirect(url_for("login"))
+    conn = get_db()
+    case = load_case_or_404(conn, user, case_id)
+    if not can_collaborate(user, case):
+        conn.close()
+        abort(403)
+    raw = request.form.get("tag", "")
+    tag = clean_tag(raw)
+    key = tag.lower()
+    existing = [r["tag_key"] for r in conn.execute(
+        "SELECT tag_key FROM case_tags WHERE case_id = ?", (case_id,))]
+    if not raw.strip():
+        flash("Type a tag first.", "error")
+    elif not tag:
+        flash(f"Tags can use letters, numbers, spaces, and - . & / _ (up to {MAX_TAG_LENGTH} characters).", "error")
+    elif key in existing:
+        flash(f'This project already has the tag "{tag}".', "error")
+    elif len(existing) >= MAX_TAGS:
+        flash(f"A project can have up to {MAX_TAGS} tags.", "error")
+    else:
+        # If the tag already exists elsewhere, reuse its spelling so it stays consistent.
+        known = conn.execute(
+            "SELECT tag FROM case_tags WHERE tag_key = ? ORDER BY created_at LIMIT 1", (key,)
+        ).fetchone()
+        if known:
+            tag = known["tag"]
+        conn.execute(
+            "INSERT INTO case_tags (case_id, tag, tag_key, added_by) VALUES (?, ?, ?, ?)",
+            (case_id, tag, key, user["id"]),
+        )
+        log_history(conn, case_id, user["id"], "tag_add", f'the tag "{tag}"')
+        conn.commit()
+        flash(f'Tag added: {tag}.', "success")
+    conn.close()
+    return back_to_case(case_id)
+
+
+@app.route("/cases/<int:case_id>/tags/remove", methods=["POST"])
+def remove_tag(case_id):
+    user = current_user()
+    if user is None:
+        return redirect(url_for("login"))
+    conn = get_db()
+    case = load_case_or_404(conn, user, case_id)
+    if not can_collaborate(user, case):
+        conn.close()
+        abort(403)
+    key = request.form.get("tag_key", "")
+    row = conn.execute(
+        "SELECT tag FROM case_tags WHERE case_id = ? AND tag_key = ?", (case_id, key)
+    ).fetchone()
+    if row is not None:
+        conn.execute("DELETE FROM case_tags WHERE case_id = ? AND tag_key = ?", (case_id, key))
+        log_history(conn, case_id, user["id"], "tag_remove", f'the tag "{row["tag"]}"')
+        conn.commit()
+        flash(f'Tag removed: {row["tag"]}.', "success")
+    conn.close()
+    return back_to_case(case_id)
 
 
 @app.route("/notifications")
@@ -1192,19 +1458,19 @@ def archive():
     query = request.args.get("q", "").strip()
 
     conn = get_db()
-    if user["role"] == "Administrator":
-        rows = conn.execute(
-            CASE_QUERY + " WHERE c.archived_at IS NOT NULL ORDER BY c.archived_at DESC"
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            CASE_QUERY + " WHERE c.archived_at IS NOT NULL "
-            "AND (c.owner_id = ? OR c.manager_id = ?) ORDER BY c.archived_at DESC",
-            (user["id"], user["id"]),
-        ).fetchall()
+    rows = conn.execute(
+        CASE_QUERY + " WHERE c.archived_at IS NOT NULL ORDER BY c.archived_at DESC"
+    ).fetchall()
+    allowed_ids = allowed_viewer_ids(conn, user)
     conn.close()
 
-    cases = [finish_info(due_info(row)) for row in rows]
+    cases = []
+    for row in rows:
+        c = finish_info(due_info(row))
+        c["hidden"] = False
+        if hides_details(c, user, allowed_ids):
+            redact(c)
+        cases.append(c)
     total = len(cases)
     if query:
         cases = [c for c in cases if query.lower() in c["customer_name"].lower()]
@@ -1238,14 +1504,154 @@ def admin_users():
             "editable": person["role"] == "Administrator"
             or bool(set(PERMISSIONS) - inherited),
         })
+    demo_on = demo_mode_on(conn)
+    # People who can still sign in with the published demo password.
+    demo_password_users = [
+        p["name"] for p in people if check_password_hash(p["password_hash"], DEMO_PASSWORD)
+    ]
     conn.close()
     return render_template(
         "admin_users.html",
         user=user,
+        demo_on=demo_on,
+        demo_password_users=demo_password_users,
+        form=session.pop("new_user_form", {}),
         rows=rows,
         permissions=PERMISSIONS,
         active_nav="users",
     )
+
+
+DEMO_PASSWORD = "demo1234"
+
+
+def demo_mode_on(conn=None):
+    """Demo mode shows the demo sign-in details on the login page. On until an admin turns it off."""
+    own = conn is None
+    conn = conn or get_db()
+    row = conn.execute("SELECT value FROM app_settings WHERE key = 'demo_mode'").fetchone()
+    if own:
+        conn.close()
+    return row is None or row["value"] != "off"
+
+
+MIN_PASSWORD = 8
+USERNAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{2,29}$")
+
+
+def default_initials(name):
+    """First letter of the first and last word, or the first two letters of one word."""
+    words = name.split()
+    if len(words) >= 2:
+        return (words[0][0] + words[-1][0]).upper()
+    return name[:2].upper()
+
+
+@app.route("/admin/settings/demo-mode", methods=["POST"])
+def set_demo_mode():
+    user = current_user()
+    if user is None:
+        return redirect(url_for("login"))
+    if user["role"] != "Administrator":
+        abort(403)
+    value = "off" if request.form.get("demo_mode") == "off" else "on"
+    conn = get_db()
+    conn.execute(
+        "INSERT INTO app_settings (key, value) VALUES ('demo_mode', ?) "
+        "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        (value,),
+    )
+    conn.commit()
+    conn.close()
+    flash(
+        "Demo mode is off. The sign-in page no longer shows the demo accounts."
+        if value == "off" else "Demo mode is on. The sign-in page shows the demo accounts.",
+        "success",
+    )
+    return redirect(url_for("admin_users"))
+
+
+@app.route("/admin/users/new", methods=["POST"])
+def create_user():
+    """An Administrator adds a person. They sign in with the temporary password."""
+    user = current_user()
+    if user is None:
+        return redirect(url_for("login"))
+    if user["role"] != "Administrator":
+        abort(403)
+
+    name = clean_name(request.form.get("name", ""))
+    username = request.form.get("username", "").strip().lower()
+    role = request.form.get("role", "")
+    initials = request.form.get("initials", "").strip().upper()
+    password = request.form.get("password", "")
+
+    conn = get_db()
+    problem = name_problem(name)
+    if problem:
+        pass
+    elif not USERNAME_PATTERN.match(username):
+        problem = "Usernames are 3 to 30 characters: lowercase letters, numbers, dots, dashes, or underscores."
+    elif conn.execute("SELECT 1 FROM users WHERE username = ?", (username,)).fetchone():
+        problem = f'The username "{username}" is already taken.'
+    elif role not in ("Administrator", "Manager", "Analyst"):
+        problem = "Choose a role."
+    elif initials and not (2 <= len(initials) <= 3 and initials.isalpha()):
+        problem = "Initials must be 2 or 3 letters."
+    elif len(password) < MIN_PASSWORD:
+        problem = f"The temporary password needs at least {MIN_PASSWORD} characters."
+
+    if problem:
+        conn.close()
+        flash(problem, "error")
+        session["new_user_form"] = {
+            "name": name, "username": username, "role": role, "initials": initials,
+        }
+        return redirect(url_for("admin_users"))
+
+    conn.execute(
+        "INSERT INTO users (name, username, initials, role, password_hash) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (name, username, initials or default_initials(name), role,
+         generate_password_hash(password)),
+    )
+    conn.commit()
+    conn.close()
+    flash(
+        f"{name} was added as {role_label(role)}. Give them the username "
+        f"\"{username}\" and the temporary password you set.", "success",
+    )
+    return redirect(url_for("admin_users"))
+
+
+@app.route("/admin/users/reset-password", methods=["POST"])
+def reset_password():
+    user = current_user()
+    if user is None:
+        return redirect(url_for("login"))
+    if user["role"] != "Administrator":
+        abort(403)
+    conn = get_db()
+    person_id = request.form.get("person", "")
+    person = conn.execute(
+        "SELECT * FROM users WHERE id = ?", (person_id,)
+    ).fetchone() if person_id.isdigit() else None
+    if person is None:
+        conn.close()
+        abort(404)
+    person_id = person["id"]
+    password = request.form.get("password", "")
+    if len(password) < MIN_PASSWORD:
+        flash(f"The new password needs at least {MIN_PASSWORD} characters.", "error")
+    else:
+        conn.execute(
+            "UPDATE users SET password_hash = ? WHERE id = ?",
+            (generate_password_hash(password), person_id),
+        )
+        conn.commit()
+        flash(f'Password reset for {person["name"]}.', "success")
+    conn.close()
+    return redirect(url_for("admin_users"))
 
 
 @app.route("/admin/users/<int:person_id>/permissions", methods=["POST"])
@@ -1545,6 +1951,37 @@ def restore_task(user, task_id):
     return back_to_workflows(task["type_id"])
 
 
+@app.route("/account/password", methods=["GET", "POST"])
+def change_password():
+    """Anyone can change their own password. This is how a new person replaces the temporary one."""
+    user = current_user()
+    if user is None:
+        return redirect(url_for("login"))
+    if request.method == "POST":
+        current = request.form.get("current", "")
+        new = request.form.get("new", "")
+        again = request.form.get("again", "")
+        if not check_password_hash(user["password_hash"], current):
+            flash("Your current password is not correct.", "error")
+        elif len(new) < MIN_PASSWORD:
+            flash(f"The new password needs at least {MIN_PASSWORD} characters.", "error")
+        elif new != again:
+            flash("The two new passwords do not match.", "error")
+        elif new == current:
+            flash("Choose a password that is different from the current one.", "error")
+        else:
+            conn = get_db()
+            conn.execute(
+                "UPDATE users SET password_hash = ? WHERE id = ?",
+                (generate_password_hash(new), user["id"]),
+            )
+            conn.commit()
+            conn.close()
+            flash("Your password was changed.", "success")
+            return redirect(url_for("change_password"))
+    return render_template("change_password.html", user=user, active_nav="account")
+
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
@@ -1560,7 +1997,7 @@ def login():
             session["user_id"] = user["id"]
             return redirect(url_for("home"))
         flash("Incorrect username or password.")
-    return render_template("login.html")
+    return render_template("login.html", demo=demo_mode_on())
 
 
 @app.route("/logout")
