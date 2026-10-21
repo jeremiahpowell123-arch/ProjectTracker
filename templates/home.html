@@ -6,11 +6,18 @@
   <p class="muted">Track progress, spot blockers, and keep your team moving.</p>
 </div>
 
+{% if needs_approval %}
+  <div class="card approval-banner">
+    <strong>{{ needs_approval|length }} out-of-scope request{{ '' if needs_approval|length == 1 else 's' }} need{{ 's' if needs_approval|length == 1 else '' }} your approval:</strong>
+    {% for c in needs_approval %}<a href="{{ url_for('case_detail', case_id=c.id) }}">{{ c.customer_name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}
+  </div>
+{% endif %}
+
 <div class="toolbar">
   <div class="pills" role="group" aria-label="Filter by status">
     {% for key, label in status_filters %}
       <a class="pill-link {% if status == key %}active{% endif %}"
-         href="{{ url_for('home', status=(key if key != 'all' else None), view=(view if view != 'board' else None), q=(query or None), mine=(1 if mine else None), type=type_id) }}">
+         href="{{ url_for('home', status=(key if key != 'all' else None), view=(view if view != 'board' else None), q=(query or None), mine=(1 if mine else None), type=type_id, hide_oos=(1 if hide_oos else None)) }}">
         {{ label }} <span class="count">{{ counts[key] }}</span>
       </a>
     {% endfor %}
@@ -27,19 +34,29 @@
     {% if status != 'all' %}<input type="hidden" name="status" value="{{ status }}">{% endif %}
     {% if query %}<input type="hidden" name="q" value="{{ query }}">{% endif %}
     {% if mine %}<input type="hidden" name="mine" value="1">{% endif %}
+    {% if hide_oos %}<input type="hidden" name="hide_oos" value="1">{% endif %}
     <noscript><button class="btn small" type="submit">Apply</button></noscript>
   </form>
+  <div class="oos-toggle">
+    <span class="muted-sm">Out of scope</span>
+    <div class="segmented" role="group" aria-label="Show or hide out-of-scope projects">
+      <a class="{% if not hide_oos %}active{% endif %}"
+         href="{{ url_for('home', status=(status if status != 'all' else None), view=(view if view != 'board' else None), q=(query or None), mine=(1 if mine else None), type=type_id) }}">Show{% if oos_count %} ({{ oos_count }}){% endif %}</a>
+      <a class="{% if hide_oos %}active{% endif %}"
+         href="{{ url_for('home', status=(status if status != 'all' else None), view=(view if view != 'board' else None), q=(query or None), mine=(1 if mine else None), type=type_id, hide_oos=1) }}">Hide</a>
+    </div>
+  </div>
   <div class="segmented" role="group" aria-label="Choose a view">
     <a class="{% if view == 'board' %}active{% endif %}"
-       href="{{ url_for('home', status=(status if status != 'all' else None), q=(query or None), mine=(1 if mine else None), type=type_id) }}">Board</a>
+       href="{{ url_for('home', status=(status if status != 'all' else None), q=(query or None), mine=(1 if mine else None), type=type_id, hide_oos=(1 if hide_oos else None)) }}">Board</a>
     <a class="{% if view == 'list' %}active{% endif %}"
-       href="{{ url_for('home', view='list', status=(status if status != 'all' else None), q=(query or None), mine=(1 if mine else None), type=type_id) }}">List</a>
+       href="{{ url_for('home', view='list', status=(status if status != 'all' else None), q=(query or None), mine=(1 if mine else None), type=type_id, hide_oos=(1 if hide_oos else None)) }}">List</a>
   </div>
 </div>
 
 {% if not cases %}
   <div class="card empty">
-    {% if status != 'all' or query or mine or type_id %}
+    {% if status != 'all' or query or mine or type_id or hide_oos %}
       No projects match these filters.
     {% elif has_permission(user, 'create_projects') %}
       No projects yet. Click <strong>New Project</strong> to create the first one.
@@ -51,7 +68,7 @@
 {% elif view == "board" %}
   <div class="board">
     {% for col in columns %}
-      <section class="column {% if col.kind == 'done' %}col-done{% elif col.kind == 'other' %}col-other{% else %}col-{{ loop.index0 % 4 }}{% endif %}">
+      <section class="column {% if col.kind == 'out' %}col-out{% elif col.kind == 'other' %}col-other{% else %}col-{{ loop.index0 % 4 }}{% endif %}">
         <header class="column-head">
           <span class="dot"></span>
           <h2>{{ col.name }}</h2>
@@ -64,8 +81,13 @@
             <div class="project-tags">
               <span class="pill risk-{{ c.risk_rating|lower }}">{{ c.risk_rating }}</span>
               <span class="chip due-{{ c.due_class }}">{{ c.due_label }}</span>
+              {% if c.scope_state == 'pending' %}<span class="chip due-review">Out-of-scope request</span>{% endif %}
             </div>
-            <div class="project-meta">Due {{ c.due_date|pretty_date }} · {{ c.done_stages }} of {{ c.total_stages }} stages</div>
+            {% if c.scope_state == 'out' %}
+              <div class="project-meta">Frozen at {{ c.current_stage or 'the last stage' }} · {{ c.done_stages }} of {{ c.total_stages }} stages</div>
+            {% else %}
+              <div class="project-meta">Due {{ c.due_date|pretty_date }} · {{ c.done_stages }} of {{ c.total_stages }} stages</div>
+            {% endif %}
             <div class="project-foot">
               <span class="avatar sm {{ c.owner_id|avatar_class }}">{{ c.owner_initials }}</span>
               <span>{{ c.owner_name }}</span>
@@ -106,7 +128,7 @@
             <td>
               <span class="person"><span class="avatar sm {{ c.manager_id|avatar_class }}">{{ c.manager_initials }}</span>{{ c.manager_name }}</span>
             </td>
-            <td><span class="chip due-{{ c.due_class }}">{{ c.due_label }}</span></td>
+            <td><span class="chip due-{{ c.due_class }}">{{ c.due_label }}</span>{% if c.scope_state == 'pending' %} <span class="chip due-review">Out-of-scope request</span>{% endif %}</td>
           </tr>
         {% endfor %}
       </tbody>

@@ -19,7 +19,6 @@ STATUS_FILTERS = [
     ("ontrack", "On Track"),
     ("soon", "Due Soon"),
     ("overdue", "Overdue"),
-    ("complete", "Complete"),
 ]
 
 # The database stores the role "Analyst". The screens show "Contributor".
@@ -133,7 +132,10 @@ def due_info(row):
     case = dict(row)
     days = (date.fromisoformat(case["due_date"]) - date.today()).days
     complete = case["total_stages"] > 0 and case["done_stages"] == case["total_stages"]
-    if complete:
+    if case["scope_state"] == "out":
+        case["due_class"] = "outofscope"
+        case["due_label"] = "Out of scope"
+    elif complete:
         case["due_class"] = "complete"
         case["due_label"] = "Complete"
     elif days < 0:
@@ -156,18 +158,19 @@ def build_columns(cases, stage_names):
     columns = [{"name": n, "kind": "stage", "cases": []} for n in stage_names]
     by_name = {col["name"]: col for col in columns}
     other = {"name": "Other stages", "kind": "other", "cases": []}
-    done = {"name": "Complete", "kind": "done", "cases": []}
+    out = {"name": "Out of scope", "kind": "out", "cases": []}
     for case in cases:
         stage = case["current_stage"]
-        if stage is None and case["total_stages"] > 0:
-            done["cases"].append(case)
+        if case["scope_state"] == "out":
+            out["cases"].append(case)
         elif stage in by_name:
             by_name[stage]["cases"].append(case)
         else:
             other["cases"].append(case)
     if other["cases"]:
         columns.append(other)
-    columns.append(done)
+    if out["cases"]:
+        columns.append(out)
     return columns
 
 
@@ -178,6 +181,7 @@ CASE_QUERY = """
            m.name AS manager_name,
            m.initials AS manager_initials,
            t.name AS type_name,
+           sa.name AS scope_actor_name,
            (SELECT COUNT(*) FROM case_stages s
              WHERE s.case_id = c.id AND s.archived = 0) AS total_stages,
            (SELECT COUNT(*) FROM case_stages s
@@ -191,6 +195,7 @@ CASE_QUERY = """
     JOIN users o ON o.id = c.owner_id
     JOIN users m ON m.id = c.manager_id
     LEFT JOIN project_types t ON t.id = c.type_id
+    LEFT JOIN users sa ON sa.id = c.scope_actor_id
 """
 
 
@@ -222,6 +227,67 @@ def can_edit(user, case):
 def can_override(user, case):
     """The project's manager and Administrators can step in when needed."""
     return user["role"] == "Administrator" or user["id"] == case["manager_id"]
+
+
+def case_locked(case):
+    """Archived and out-of-scope projects can't change until a manager steps in."""
+    return case["archived_at"] is not None or case["scope_state"] == "out"
+
+
+def locked_message(case):
+    if case["archived_at"] is not None:
+        return "This project is archived. A manager can reopen it."
+    return "This project is out of scope. A manager can return it to scope."
+
+
+def local_date(utc_text):
+    """A stored UTC timestamp as a date on this computer's calendar."""
+    return datetime.fromisoformat(utc_text).replace(tzinfo=timezone.utc).astimezone().date()
+
+
+def finish_info(case):
+    """Add finished-date wording for the Archive: on time, or how late."""
+    finished = local_date(case["archived_at"])
+    late = (finished - date.fromisoformat(case["due_date"])).days
+    case["finished_on"] = f"{finished:%b} {finished.day}, {finished.year}"
+    if late <= 0:
+        case["finish_label"], case["finish_class"] = "On time", "complete"
+    else:
+        case["finish_label"], case["finish_class"] = f"{late} day{plural(late)} late", "overdue"
+    return case
+
+
+def maybe_archive(conn, case_id, actor_id):
+    """Move a project to the Archive when its last stage is complete."""
+    counts = conn.execute(
+        "SELECT COUNT(*) AS total, "
+        "COALESCE(SUM(status = 'Complete'), 0) AS done "
+        "FROM case_stages WHERE case_id = ? AND archived = 0",
+        (case_id,),
+    ).fetchone()
+    if counts["total"] == 0 or counts["done"] != counts["total"]:
+        return False
+    case = conn.execute(
+        "SELECT scope_state, archived_at FROM cases WHERE id = ?", (case_id,)
+    ).fetchone()
+    if case["archived_at"] is not None:
+        return False
+    if case["scope_state"] == "pending":
+        conn.execute(
+            "UPDATE cases SET scope_state = 'active', scope_reason = NULL, "
+            "scope_actor_id = NULL, scope_at = NULL WHERE id = ?",
+            (case_id,),
+        )
+        log_history(
+            conn, case_id, actor_id, "scope_withdraw",
+            "the out-of-scope request because the project was completed",
+        )
+    conn.execute("UPDATE cases SET archived_at = CURRENT_TIMESTAMP WHERE id = ?", (case_id,))
+    log_history(
+        conn, case_id, actor_id, "archived",
+        "the project after its last stage was completed",
+    )
+    return True
 
 
 MAX_REASON = 500
@@ -289,13 +355,17 @@ def home():
     query = request.args.get("q", "").strip()
     mine = request.args.get("mine") == "1"
     type_arg = request.args.get("type", "")
+    hide_oos = request.args.get("hide_oos") == "1"
 
     conn = get_db()
     if user["role"] == "Administrator":
-        rows = conn.execute(CASE_QUERY + " ORDER BY c.due_date").fetchall()
+        rows = conn.execute(
+            CASE_QUERY + " WHERE c.archived_at IS NULL ORDER BY c.due_date"
+        ).fetchall()
     else:
         rows = conn.execute(
-            CASE_QUERY + " WHERE c.owner_id = ? OR c.manager_id = ? ORDER BY c.due_date",
+            CASE_QUERY + " WHERE c.archived_at IS NULL "
+            "AND (c.owner_id = ? OR c.manager_id = ?) ORDER BY c.due_date",
             (user["id"], user["id"]),
         ).fetchall()
     active_types = active_types_with_tasks(conn)
@@ -330,6 +400,14 @@ def home():
     conn.close()
 
     cases = [due_info(row) for row in rows]
+
+    # Out-of-scope requests this person can approve. Always shown, whatever the filters.
+    needs_approval = [
+        c for c in cases
+        if c["scope_state"] == "pending"
+        and (user["role"] == "Administrator" or c["manager_id"] == user["id"])
+    ]
+
     if type_id is not None:
         cases = [c for c in cases if c["type_id"] == type_id]
     if mine:
@@ -337,10 +415,15 @@ def home():
     if query:
         cases = [c for c in cases if query.lower() in c["customer_name"].lower()]
 
+    oos_count = sum(1 for c in cases if c["scope_state"] == "out")
+    if hide_oos:
+        cases = [c for c in cases if c["scope_state"] != "out"]
+
     counts = {key: 0 for key, _ in STATUS_FILTERS}
     counts["all"] = len(cases)
     for c in cases:
-        counts[c["due_class"]] += 1
+        if c["due_class"] in counts:
+            counts[c["due_class"]] += 1
     if status != "all":
         cases = [c for c in cases if c["due_class"] == status]
 
@@ -355,6 +438,9 @@ def home():
         mine=mine,
         type_id=type_id,
         type_options=type_options,
+        hide_oos=hide_oos,
+        oos_count=oos_count,
+        needs_approval=needs_approval,
         counts=counts,
         status_filters=STATUS_FILTERS,
         active_nav="mine" if mine else "all",
@@ -469,6 +555,8 @@ def case_detail(case_id):
         activity=activity,
         statuses=STATUSES,
         new_owner_choices=new_owner_choices,
+        locked=case_locked(case),
+        is_requester=case["scope_actor_id"] == user["id"],
         can_edit=can_edit(user, case),
         can_override=can_override(user, case),
         active_nav="all",
@@ -490,6 +578,10 @@ def update_stage_status(case_id, stage_id):
     if not can_edit(user, case):
         conn.close()
         abort(403)
+    if case_locked(case):
+        conn.close()
+        flash(locked_message(case), "error")
+        return redirect(url_for("case_detail", case_id=case_id))
 
     stage = conn.execute(
         "SELECT * FROM case_stages WHERE id = ? AND case_id = ? AND archived = 0",
@@ -507,8 +599,11 @@ def update_stage_status(case_id, stage_id):
             conn, case_id, user["id"], "status_change",
             f'{stage["name"]}: {stage["status"]} → {new_status}',
         )
+        archived = maybe_archive(conn, case_id, user["id"])
         conn.commit()
         flash(f'{stage["name"]} is now {new_status}.', "success")
+        if archived:
+            flash("All stages are complete, so the project moved to the Archive.", "success")
     conn.close()
     return redirect(url_for("case_detail", case_id=case_id))
 
@@ -527,6 +622,10 @@ def override_status(case_id):
     if not can_override(user, case):
         conn.close()
         abort(403)
+    if case_locked(case):
+        conn.close()
+        flash(locked_message(case), "error")
+        return redirect(url_for("case_detail", case_id=case_id))
 
     stage_id = request.form.get("stage_id", "")
     new_status = request.form.get("status", "")
@@ -553,8 +652,11 @@ def override_status(case_id):
             conn, case_id, user["id"], "override_status",
             f'{stage["name"]}: {stage["status"]} → {new_status} | Reason: {reason}',
         )
+        archived = maybe_archive(conn, case_id, user["id"])
         conn.commit()
         flash(f'Override applied: {stage["name"]} is now {new_status}.', "success")
+        if archived:
+            flash("All stages are complete, so the project moved to the Archive.", "success")
     conn.close()
     return redirect(url_for("case_detail", case_id=case_id))
 
@@ -573,6 +675,10 @@ def reassign_owner(case_id):
     if not can_override(user, case):
         conn.close()
         abort(403)
+    if case_locked(case):
+        conn.close()
+        flash(locked_message(case), "error")
+        return redirect(url_for("case_detail", case_id=case_id))
 
     new_owner_id = request.form.get("new_owner_id", "")
     reason = clean_reason(request.form.get("reason", ""))
@@ -603,6 +709,250 @@ def reassign_owner(case_id):
         flash(f'Project reassigned to {new_owner["name"]}.', "success")
     conn.close()
     return redirect(url_for("case_detail", case_id=case_id))
+
+
+def load_case_or_404(conn, user, case_id):
+    case = get_case_for(conn, user, case_id)
+    if case is None:
+        conn.close()
+        abort(404)
+    return case
+
+
+def back_to_case(case_id):
+    return redirect(url_for("case_detail", case_id=case_id))
+
+
+def clear_scope(conn, case_id):
+    conn.execute(
+        "UPDATE cases SET scope_state = 'active', scope_reason = NULL, "
+        "scope_actor_id = NULL, scope_at = NULL WHERE id = ?",
+        (case_id,),
+    )
+
+
+@app.route("/cases/<int:case_id>/scope/out", methods=["POST"])
+def scope_out(case_id):
+    """A manager or Administrator marks a project out of scope. The owner requests it."""
+    user = current_user()
+    if user is None:
+        return redirect(url_for("login"))
+    conn = get_db()
+    case = load_case_or_404(conn, user, case_id)
+    direct = can_override(user, case)
+    if not direct and not can_edit(user, case):
+        conn.close()
+        abort(403)
+
+    reason = clean_reason(request.form.get("reason", ""))
+    if case["archived_at"] is not None:
+        flash("An archived project can't be marked out of scope. Reopen it first.", "error")
+    elif case["scope_state"] == "pending":
+        flash("An out-of-scope request is already waiting for approval.", "error")
+    elif case["scope_state"] == "out":
+        flash("This project is already out of scope.", "error")
+    elif not reason:
+        flash("A reason is required.", "error")
+    elif direct:
+        conn.execute(
+            "UPDATE cases SET scope_state = 'out', scope_reason = ?, "
+            "scope_actor_id = ?, scope_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (reason, user["id"], case_id),
+        )
+        log_history(
+            conn, case_id, user["id"], "scope_out",
+            f"the project was marked out of scope | Reason: {reason}",
+        )
+        conn.commit()
+        flash("Project marked out of scope. Its stages are now frozen.", "success")
+    else:
+        conn.execute(
+            "UPDATE cases SET scope_state = 'pending', scope_reason = ?, "
+            "scope_actor_id = ?, scope_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (reason, user["id"], case_id),
+        )
+        log_history(
+            conn, case_id, user["id"], "scope_request",
+            f"to mark the project out of scope | Reason: {reason}",
+        )
+        conn.commit()
+        flash(
+            f'Request sent. {case["manager_name"]} needs to approve it. '
+            "You can keep working until then.", "success",
+        )
+    conn.close()
+    return back_to_case(case_id)
+
+
+@app.route("/cases/<int:case_id>/scope/decide", methods=["POST"])
+def scope_decide(case_id):
+    """The manager approves or declines an out-of-scope request."""
+    user = current_user()
+    if user is None:
+        return redirect(url_for("login"))
+    conn = get_db()
+    case = load_case_or_404(conn, user, case_id)
+    if not can_override(user, case):
+        conn.close()
+        abort(403)
+
+    decision = request.form.get("decision", "")
+    reason = clean_reason(request.form.get("reason", ""))
+    if case["scope_state"] != "pending":
+        flash("There is no out-of-scope request waiting for approval.", "error")
+    elif decision == "approve":
+        conn.execute(
+            "UPDATE cases SET scope_state = 'out', scope_actor_id = ?, "
+            "scope_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (user["id"], case_id),
+        )
+        detail = "the out-of-scope request"
+        if reason:
+            detail += f" | Reason: {reason}"
+        log_history(conn, case_id, user["id"], "scope_approve", detail)
+        conn.commit()
+        flash("Approved. The project is out of scope and its stages are frozen.", "success")
+    elif decision == "decline":
+        if not reason:
+            flash("A reason is required to decline.", "error")
+        else:
+            clear_scope(conn, case_id)
+            log_history(
+                conn, case_id, user["id"], "scope_decline",
+                f"the out-of-scope request | Reason: {reason}",
+            )
+            conn.commit()
+            flash("Request declined. The project stays in scope.", "success")
+    else:
+        flash("Choose Approve or Decline.", "error")
+    conn.close()
+    return back_to_case(case_id)
+
+
+@app.route("/cases/<int:case_id>/scope/withdraw", methods=["POST"])
+def scope_withdraw(case_id):
+    """Whoever sent an out-of-scope request can take it back."""
+    user = current_user()
+    if user is None:
+        return redirect(url_for("login"))
+    conn = get_db()
+    case = load_case_or_404(conn, user, case_id)
+    if case["scope_state"] != "pending" or case["scope_actor_id"] != user["id"]:
+        conn.close()
+        abort(403)
+    clear_scope(conn, case_id)
+    log_history(
+        conn, case_id, user["id"], "scope_withdraw", "the out-of-scope request",
+    )
+    conn.commit()
+    conn.close()
+    flash("Request withdrawn.", "success")
+    return back_to_case(case_id)
+
+
+@app.route("/cases/<int:case_id>/scope/return", methods=["POST"])
+def scope_return(case_id):
+    """A manager or Administrator puts an out-of-scope project back in scope."""
+    user = current_user()
+    if user is None:
+        return redirect(url_for("login"))
+    conn = get_db()
+    case = load_case_or_404(conn, user, case_id)
+    if not can_override(user, case):
+        conn.close()
+        abort(403)
+
+    reason = clean_reason(request.form.get("reason", ""))
+    if case["scope_state"] != "out":
+        flash("This project is not out of scope.", "error")
+    elif not reason:
+        flash("A reason is required.", "error")
+    else:
+        clear_scope(conn, case_id)
+        log_history(
+            conn, case_id, user["id"], "scope_return",
+            f"the project was returned to scope | Reason: {reason}",
+        )
+        conn.commit()
+        flash("Project returned to scope. Its stages can be changed again.", "success")
+    conn.close()
+    return back_to_case(case_id)
+
+
+@app.route("/cases/<int:case_id>/reopen", methods=["POST"])
+def reopen_case(case_id):
+    """A manager or Administrator takes a finished project out of the Archive."""
+    user = current_user()
+    if user is None:
+        return redirect(url_for("login"))
+    conn = get_db()
+    case = load_case_or_404(conn, user, case_id)
+    if not can_override(user, case):
+        conn.close()
+        abort(403)
+
+    stage_id = request.form.get("stage_id", "")
+    reason = clean_reason(request.form.get("reason", ""))
+    stage = None
+    if stage_id.isdigit():
+        stage = conn.execute(
+            "SELECT * FROM case_stages WHERE id = ? AND case_id = ? AND archived = 0",
+            (int(stage_id), case_id),
+        ).fetchone()
+
+    if case["archived_at"] is None:
+        flash("This project is not archived.", "error")
+    elif stage is None:
+        flash("Choose the stage to move back to In progress.", "error")
+    elif not reason:
+        flash("A reason is required to reopen a project.", "error")
+    else:
+        conn.execute(
+            "UPDATE case_stages SET status = 'In progress' WHERE id = ?", (stage["id"],)
+        )
+        conn.execute("UPDATE cases SET archived_at = NULL WHERE id = ?", (case_id,))
+        log_history(
+            conn, case_id, user["id"], "reopen",
+            f'the project. {stage["name"]} is back to In progress | Reason: {reason}',
+        )
+        conn.commit()
+        flash("Project reopened. It is back on the board.", "success")
+    conn.close()
+    return back_to_case(case_id)
+
+
+@app.route("/archive")
+def archive():
+    user = current_user()
+    if user is None:
+        return redirect(url_for("login"))
+    query = request.args.get("q", "").strip()
+
+    conn = get_db()
+    if user["role"] == "Administrator":
+        rows = conn.execute(
+            CASE_QUERY + " WHERE c.archived_at IS NOT NULL ORDER BY c.archived_at DESC"
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            CASE_QUERY + " WHERE c.archived_at IS NOT NULL "
+            "AND (c.owner_id = ? OR c.manager_id = ?) ORDER BY c.archived_at DESC",
+            (user["id"], user["id"]),
+        ).fetchall()
+    conn.close()
+
+    cases = [finish_info(due_info(row)) for row in rows]
+    total = len(cases)
+    if query:
+        cases = [c for c in cases if query.lower() in c["customer_name"].lower()]
+    return render_template(
+        "archive.html",
+        user=user,
+        cases=cases,
+        total=total,
+        query=query,
+        active_nav="archive",
+    )
 
 
 @app.route("/admin/users")

@@ -8,6 +8,7 @@
     <nav class="nav" aria-label="Main">
       <a class="nav-link {% if active_nav == 'all' %}active{% endif %}" href="{{ url_for('home') }}">{{ icon('folder') }}<span>All Projects</span></a>
       <a class="nav-link {% if active_nav == 'mine' %}active{% endif %}" href="{{ url_for('home', mine=1) }}">{{ icon('user') }}<span>My Projects</span></a>
+      <a class="nav-link {% if active_nav == 'archive' %}active{% endif %}" href="{{ url_for('archive') }}">{{ icon('archive') }}<span>Archive</span></a>
       {% if user["role"] == "Administrator" %}
         <div class="nav-label">Admin</div>
         <a class="nav-link {% if active_nav == 'workflows' %}active{% endif %}" href="{{ url_for('admin_workflows') }}">{{ icon('layers') }}<span>Workflows</span></a>        <span class="nav-link disabled">{{ icon('tag') }}<span>Tags</span><em>Soon</em></span>

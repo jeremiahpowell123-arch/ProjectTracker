@@ -1,0 +1,47 @@
+{% extends "app_base.html" %}
+{% block title %}Archive · ProjectTracker{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Archive</h1>
+  <p class="muted">Finished projects move here automatically. Open one to review its history. A manager can reopen a project if more work is needed.</p>
+</div>
+
+<div class="toolbar">
+  <form class="archive-search" method="get" action="{{ url_for('archive') }}" role="search">
+    <label class="sr-only" for="archive-q">Search the archive</label>
+    <input id="archive-q" type="search" name="q" value="{{ query }}" placeholder="Search archived projects">
+    <button class="btn small" type="submit">Search</button>
+    {% if query %}<a class="link" href="{{ url_for('archive') }}">Clear</a>{% endif %}
+  </form>
+  <span class="muted-sm">{{ cases|length }}{% if query %} of {{ total }}{% endif %} archived project{{ '' if total == 1 else 's' }}</span>
+</div>
+
+{% if not cases %}
+  <div class="card empty">
+    {% if query %}No archived projects match "{{ query }}".{% else %}Nothing has been archived yet. A project moves here when its last stage is completed.{% endif %}
+  </div>
+{% else %}
+  <div class="card table-wrap">
+    <table class="case-table">
+      <thead>
+        <tr>
+          <th>Project</th><th>Type</th><th>Risk</th><th>Owner</th><th>Manager</th><th>Due</th><th>Finished</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in cases %}
+          <tr>
+            <td class="strong"><a class="row-link" href="{{ url_for('case_detail', case_id=c.id) }}">{{ c.customer_name }}</a></td>
+            <td class="muted-sm">{{ c.type_name or "—" }}</td>
+            <td><span class="pill risk-{{ c.risk_rating|lower }}">{{ c.risk_rating }}</span></td>
+            <td><span class="person"><span class="avatar sm {{ c.owner_id|avatar_class }}">{{ c.owner_initials }}</span>{{ c.owner_name }}</span></td>
+            <td><span class="person"><span class="avatar sm {{ c.manager_id|avatar_class }}">{{ c.manager_initials }}</span>{{ c.manager_name }}</span></td>
+            <td class="muted-sm">{{ c.due_date|pretty_date }}</td>
+            <td>{{ c.finished_on }} <span class="chip due-{{ c.finish_class }}">{{ c.finish_label }}</span></td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% endif %}
+{% endblock %}

@@ -536,3 +536,24 @@ button.secondary:hover { background: var(--indigo-tint); }
   .wf-head, .wf-task, .wf-edit, .wf-add { flex-wrap: wrap; }
   .wf-head .inline-form.grow, .wf-edit input[name="name"], .wf-add input[name="name"] { flex: 1 1 100%; }
 }
+
+
+/* ---------- Archive and out of scope ---------- */
+.due-outofscope { background: #E2E8F0; color: #475569; }
+.col-out { --col: #94A3B8; --tint: #EEF1F5; }
+.oos-toggle { display: inline-flex; align-items: center; gap: 8px; }
+.archive-search { display: flex; align-items: center; gap: 10px; }
+.archive-search input { width: 280px; }
+
+.banner { margin-bottom: 16px; padding: 14px 18px; border-radius: 12px; font-size: 0.92rem; line-height: 1.45; border: 1px solid transparent; }
+.banner-reason { margin-top: 4px; font-style: italic; }
+.banner-done { background: #D1FAE5; color: #065F46; border-color: #A7F3D0; }
+.banner-out { background: #E2E8F0; color: #334155; border-color: #CBD5E1; }
+.banner-pending { background: #FEF3C7; color: #78350F; border-color: #FDE68A; }
+
+.approval-banner { margin-bottom: 16px; padding: 14px 18px; background: #FEF3C7; border-color: #FDE68A; color: #78350F; font-size: 0.92rem; }
+.approval-banner a { color: #92400E; font-weight: 600; }
+
+.btn-row { display: flex; gap: 10px; margin-top: 14px; }
+.btn-row button { flex: 1; margin-top: 0; }
+.detail-title + .banner { margin-top: 14px; }

@@ -67,7 +67,12 @@ CREATE TABLE IF NOT EXISTS cases (
     manager_id INTEGER NOT NULL REFERENCES users(id),
     created_by INTEGER NOT NULL REFERENCES users(id),
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    type_id INTEGER REFERENCES project_types(id)
+    type_id INTEGER REFERENCES project_types(id),
+    archived_at TEXT,
+    scope_state TEXT NOT NULL DEFAULT 'active',
+    scope_reason TEXT,
+    scope_actor_id INTEGER REFERENCES users(id),
+    scope_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS case_stages (
@@ -113,6 +118,30 @@ def init_db():
     case_columns = {r["name"] for r in conn.execute("PRAGMA table_info(cases)")}
     if "type_id" not in case_columns:
         conn.execute("ALTER TABLE cases ADD COLUMN type_id INTEGER REFERENCES project_types(id)")
+
+    # Archive and out-of-scope columns. Projects that were already finished
+    # when this feature arrived are moved to the archive once.
+    case_columns = {r["name"] for r in conn.execute("PRAGMA table_info(cases)")}
+    if "archived_at" not in case_columns:
+        conn.execute("ALTER TABLE cases ADD COLUMN archived_at TEXT")
+        conn.execute(
+            "UPDATE cases SET archived_at = COALESCE("
+            "(SELECT MAX(created_at) FROM history WHERE history.case_id = cases.id), "
+            "cases.created_at) "
+            "WHERE (SELECT COUNT(*) FROM case_stages s "
+            "       WHERE s.case_id = cases.id AND s.archived = 0) > 0 "
+            "AND (SELECT COUNT(*) FROM case_stages s "
+            "     WHERE s.case_id = cases.id AND s.archived = 0 "
+            "       AND s.status != 'Complete') = 0"
+        )
+    if "scope_state" not in case_columns:
+        conn.execute("ALTER TABLE cases ADD COLUMN scope_state TEXT NOT NULL DEFAULT 'active'")
+    if "scope_reason" not in case_columns:
+        conn.execute("ALTER TABLE cases ADD COLUMN scope_reason TEXT")
+    if "scope_actor_id" not in case_columns:
+        conn.execute("ALTER TABLE cases ADD COLUMN scope_actor_id INTEGER REFERENCES users(id)")
+    if "scope_at" not in case_columns:
+        conn.execute("ALTER TABLE cases ADD COLUMN scope_at TEXT")
 
     user_count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
     if user_count == 0:

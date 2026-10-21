@@ -10,6 +10,22 @@
   {% if case.type_name %}<span class="type-tag">{{ case.type_name }}</span>{% endif %}
 </div>
 
+{% if case.archived_at %}
+  <div class="banner banner-done">
+    <strong>Completed and archived</strong> on {{ case.archived_at|pretty_time }}. This project is read-only.{% if can_override %} You can reopen it below.{% endif %}
+  </div>
+{% elif case.scope_state == 'out' %}
+  <div class="banner banner-out">
+    <strong>Out of scope.</strong> The stages are frozen as they were{% if case.scope_actor_name %}, marked by {{ case.scope_actor_name }} on {{ case.scope_at|pretty_time }}{% endif %}.
+    <div class="banner-reason">Reason: {{ case.scope_reason }}</div>
+  </div>
+{% elif case.scope_state == 'pending' %}
+  <div class="banner banner-pending">
+    <strong>Out-of-scope request waiting for {{ case.manager_name }}.</strong> Requested by {{ case.scope_actor_name }} on {{ case.scope_at|pretty_time }}. Work can continue until it is decided.
+    <div class="banner-reason">Reason: {{ case.scope_reason }}</div>
+  </div>
+{% endif %}
+
 <div class="card meta-grid">
   <div class="meta-item">
     <div class="meta-label">Due date</div>
@@ -51,7 +67,7 @@
             <span>{{ s['name'] }}</span>
             {% if s['high_priority'] %}<span class="chip due-review">High priority</span>{% endif %}
           </div>
-          {% if can_edit %}
+          {% if can_edit and not locked %}
             <form method="post" class="status-form"
                   action="{{ url_for('update_stage_status', case_id=case.id, stage_id=s['id']) }}">
               <select name="status" class="status-select status-{{ s['status']|lower|replace(' ', '-') }}"
@@ -69,13 +85,30 @@
       {% endfor %}
     </ul>
 
-    {% if not can_edit %}
+    {% if locked %}
+      <p class="hint-note">Stages can't be changed while the project is {% if case.archived_at %}archived{% else %}out of scope{% endif %}.</p>
+    {% elif not can_edit %}
       <p class="hint-note">Only the project owner changes a stage's status.{% if can_override %} Use Manager controls to override.{% endif %}</p>
     {% endif %}
   </section>
 
   <div class="side-stack">
-  {% if can_override %}
+  {% if case.scope_state == 'pending' and not case.archived_at and can_override %}
+    <section class="card panel controls">
+      <h2>Out-of-scope request</h2>
+      <p class="muted-sm">{{ case.scope_actor_name }} asked to mark this project out of scope. Approving freezes the stages.</p>
+      <form method="post" action="{{ url_for('scope_decide', case_id=case.id) }}" class="control-form">
+        <label for="sd-reason">Note <span class="hint">(required to decline)</span></label>
+        <textarea id="sd-reason" name="reason" maxlength="500"></textarea>
+        <div class="btn-row">
+          <button type="submit" name="decision" value="approve">Approve</button>
+          <button type="submit" name="decision" value="decline" class="secondary">Decline</button>
+        </div>
+      </form>
+    </section>
+  {% endif %}
+
+  {% if can_override and not locked %}
   <section class="card panel controls">
     <h2>Manager controls</h2>
     <p class="muted-sm">Use these when the owner is unavailable. A reason is required and is saved in the activity log.</p>
@@ -112,9 +145,74 @@
   </section>
   {% endif %}
 
+  {% if case.archived_at %}
+    {% if can_override %}
+    <section class="card panel controls">
+      <h2>Reopen project</h2>
+      <p class="muted-sm">Move one stage back to In progress. The project returns to the board and the reason is saved in the activity log.</p>
+      <form method="post" action="{{ url_for('reopen_case', case_id=case.id) }}" class="control-form">
+        <label for="ro-stage">Stage to reopen</label>
+        <select id="ro-stage" name="stage_id" required>
+          {% for s in stages %}
+            <option value="{{ s['id'] }}" {% if loop.last %}selected{% endif %}>{{ s['name'] }}</option>
+          {% endfor %}
+        </select>
+        <label for="ro-reason">Reason</label>
+        <textarea id="ro-reason" name="reason" maxlength="500" required placeholder="For example: Missing document found"></textarea>
+        <button type="submit">Reopen project</button>
+      </form>
+    </section>
+    {% endif %}
+
+  {% elif case.scope_state == 'pending' %}
+    {% if is_requester and not can_override %}
+    <section class="card panel controls">
+      <h2>Out-of-scope request</h2>
+      <p class="muted-sm">Waiting for {{ case.manager_name }} to decide. You can take the request back.</p>
+      <form method="post" action="{{ url_for('scope_withdraw', case_id=case.id) }}" class="control-form">
+        <button type="submit" class="secondary">Withdraw request</button>
+      </form>
+    </section>
+    {% endif %}
+
+  {% elif case.scope_state == 'out' %}
+    {% if can_override %}
+    <section class="card panel controls">
+      <h2>Return to scope</h2>
+      <p class="muted-sm">The stages can be changed again. The reason is saved in the activity log.</p>
+      <form method="post" action="{{ url_for('scope_return', case_id=case.id) }}" class="control-form">
+        <label for="sr-reason">Reason</label>
+        <textarea id="sr-reason" name="reason" maxlength="500" required placeholder="For example: Customer re-engaged"></textarea>
+        <button type="submit">Return to scope</button>
+      </form>
+    </section>
+    {% endif %}
+
+  {% elif can_override or can_edit %}
+    <section class="card panel controls">
+      <h2>{% if can_override %}Mark out of scope{% else %}Request out of scope{% endif %}</h2>
+      {% if can_override %}
+        <p class="muted-sm">The stages are frozen where they are and the project is noted as out of scope.</p>
+      {% else %}
+        <p class="muted-sm">{{ case.manager_name }} will be asked to approve. You can keep working until they decide.</p>
+      {% endif %}
+      <form method="post" action="{{ url_for('scope_out', case_id=case.id) }}" class="control-form">
+        <label for="so-reason">Reason</label>
+        <textarea id="so-reason" name="reason" maxlength="500" required placeholder="For example: Customer withdrew the application"></textarea>
+        <button type="submit" class="secondary">{% if can_override %}Mark out of scope{% else %}Send request{% endif %}</button>
+      </form>
+    </section>
+  {% endif %}
+
   <aside class="card panel">
     <h2>Recent activity</h2>
     {% if activity %}
+      {% set chip_labels = {
+        'override_status': 'Override', 'reassign': 'Reassigned',
+        'scope_request': 'Request', 'scope_approve': 'Approved', 'scope_decline': 'Declined',
+        'scope_withdraw': 'Withdrawn', 'scope_out': 'Out of scope', 'scope_return': 'In scope',
+        'archived': 'Archived', 'reopen': 'Reopened'
+      } %}
       <ul class="activity">
         {% for a in activity %}
           <li>
@@ -124,8 +222,7 @@
               <div class="activity-text">
                 <strong>{{ a['actor_name'] }}</strong>
                 {% if a['action'] == 'created' %}created {{ parts[0] }}
-                {% elif a['action'] == 'override_status' %}<span class="chip due-review">Override</span> {{ parts[0] }}
-                {% elif a['action'] == 'reassign' %}<span class="chip due-review">Reassigned</span> {{ parts[0] }}
+                {% elif a['action'] in chip_labels %}<span class="chip {{ 'due-complete' if a['action'] == 'archived' else ('due-outofscope' if a['action'] == 'scope_out' else 'due-review') }}">{{ chip_labels[a['action']] }}</span> {{ parts[0] }}
                 {% else %}changed {{ parts[0] }}{% endif %}
               </div>
               {% if parts|length > 1 %}<div class="activity-reason">Reason: {{ parts[1] }}</div>{% endif %}
