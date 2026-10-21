@@ -47,6 +47,7 @@
 </div>
 
 <div class="detail-layout">
+  <div class="main-stack">
   <section class="card panel">
     <h2>Journey</h2>
 
@@ -91,6 +92,56 @@
       <p class="hint-note">Only the project owner changes a stage's status.{% if can_override %} Use Manager controls to override.{% endif %}</p>
     {% endif %}
   </section>
+
+  <section class="card panel comments-card" id="comments">
+    <div class="comments-head">
+      <h2>Comments</h2>
+      {% if archived_comment_count %}
+        <div class="segmented" role="group" aria-label="Show or hide archived comments">
+          <a class="{% if not show_archived_comments %}active{% endif %}" href="{{ url_for('case_detail', case_id=case.id) }}#comments">Hide archived</a>
+          <a class="{% if show_archived_comments %}active{% endif %}" href="{{ url_for('case_detail', case_id=case.id, comments='all') }}#comments">Show archived ({{ archived_comment_count }})</a>
+        </div>
+      {% endif %}
+    </div>
+
+    <form method="post" action="{{ url_for('add_comment', case_id=case.id) }}" class="comment-form">
+      <label class="sr-only" for="comment-body">Add a comment</label>
+      <textarea id="comment-body" name="body" maxlength="1000" required placeholder="Add a comment. Your initials are added automatically."></textarea>
+      <button type="submit">Post comment</button>
+    </form>
+
+    {% if comments %}
+      <ul class="comment-list">
+        {% for m in comments %}
+          <li class="comment {% if m['archived_at'] %}is-archived{% endif %}">
+            <span class="avatar sm {{ m['author_id']|avatar_class }}">{{ m['author_initials'] }}</span>
+            <div class="comment-main">
+              <div class="comment-meta">
+                <strong>{{ m['author_name'] }}</strong>
+                <span class="comment-stamp">{{ m['author_initials'] }}</span>
+                <span class="activity-time">{{ m['created_at']|pretty_time }}</span>
+                {% if m['archived_at'] %}<span class="chip due-outofscope">Archived</span>{% endif %}
+              </div>
+              <div class="comment-body">{{ m['body'] }}</div>
+              {% if m['author_id'] == user['id'] or can_override %}
+                <form method="post" action="{{ url_for('archive_comment', case_id=case.id, comment_id=m['id']) }}" class="comment-action">
+                  {% if show_archived_comments %}<input type="hidden" name="show" value="all">{% endif %}
+                  {% if m['archived_at'] %}
+                    <button type="submit" name="action" value="restore" class="link-button">Restore</button>
+                  {% else %}
+                    <button type="submit" name="action" value="archive" class="link-button">Archive</button>
+                  {% endif %}
+                </form>
+              {% endif %}
+            </div>
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p class="muted-sm">No comments yet.</p>
+    {% endif %}
+  </section>
+  </div>
 
   <div class="side-stack">
   {% if case.scope_state == 'pending' and not case.archived_at and can_override %}
@@ -237,4 +288,5 @@
   </aside>
   </div>
 </div>
+
 {% endblock %}

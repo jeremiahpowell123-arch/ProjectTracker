@@ -107,6 +107,16 @@ CREATE TABLE IF NOT EXISTS notifications (
     read_at TEXT
 );
 
+CREATE TABLE IF NOT EXISTS comments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    case_id INTEGER NOT NULL REFERENCES cases(id),
+    author_id INTEGER NOT NULL REFERENCES users(id),
+    body TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    archived_at TEXT,
+    archived_by INTEGER REFERENCES users(id)
+);
+
 -- Only the choices a person has made are stored. No row means the category is on.
 CREATE TABLE IF NOT EXISTS notification_prefs (
     user_id INTEGER NOT NULL REFERENCES users(id),

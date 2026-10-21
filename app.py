@@ -204,6 +204,7 @@ NOTIFICATION_CATEGORIES = {
     "progress": ("Progress", "A stage status changes or a manager overrides one on your projects."),
     "scope": ("Out of scope", "An out-of-scope request is approved, declined, withdrawn, or the scope changes."),
     "lifecycle": ("Archive", "Your projects are archived or reopened."),
+    "comments": ("Comments", "Someone comments on a project you own or manage."),
 }
 
 # What each logged action says in a notification, and which category it belongs to.
@@ -636,6 +637,20 @@ def case_detail(case_id):
         "SELECT id, name, role FROM users WHERE id NOT IN (?, ?) ORDER BY name",
         (case["owner_id"], case["manager_id"]),
     ).fetchall()
+    show_archived = request.args.get("comments") == "all"
+    comments = conn.execute(
+        "SELECT m.*, u.name AS author_name, u.initials AS author_initials, "
+        "b.name AS archived_by_name "
+        "FROM comments m JOIN users u ON u.id = m.author_id "
+        "LEFT JOIN users b ON b.id = m.archived_by "
+        "WHERE m.case_id = ? " + ("" if show_archived else "AND m.archived_at IS NULL ")
+        + "ORDER BY m.id DESC",
+        (case_id,),
+    ).fetchall()
+    archived_comment_count = conn.execute(
+        "SELECT COUNT(*) FROM comments WHERE case_id = ? AND archived_at IS NOT NULL",
+        (case_id,),
+    ).fetchone()[0]
     conn.close()
 
     return render_template(
@@ -644,6 +659,9 @@ def case_detail(case_id):
         case=case,
         stages=stages,
         activity=activity,
+        comments=comments,
+        archived_comment_count=archived_comment_count,
+        show_archived_comments=show_archived,
         statuses=STATUSES,
         new_owner_choices=new_owner_choices,
         locked=case_locked(case),
@@ -1015,6 +1033,70 @@ def reopen_case(case_id):
         flash("Project reopened. It is back on the board.", "success")
     conn.close()
     return back_to_case(case_id)
+
+
+MAX_COMMENT = 1000
+
+
+@app.route("/cases/<int:case_id>/comments", methods=["POST"])
+def add_comment(case_id):
+    """Anyone who can see a project can comment. Their initials are stamped automatically."""
+    user = current_user()
+    if user is None:
+        return redirect(url_for("login"))
+    conn = get_db()
+    case = load_case_or_404(conn, user, case_id)
+    body = request.form.get("body", "").strip()[:MAX_COMMENT]
+    if not body:
+        flash("Write a comment first.", "error")
+    else:
+        conn.execute(
+            "INSERT INTO comments (case_id, author_id, body) VALUES (?, ?, ?)",
+            (case_id, user["id"], body),
+        )
+        notify(conn, [case["owner_id"], case["manager_id"]], case_id, user["id"], "comments",
+               f'{user["name"]} commented on {case["customer_name"]}', body[:160])
+        conn.commit()
+        flash("Comment added.", "success")
+    conn.close()
+    return back_to_case(case_id)
+
+
+@app.route("/cases/<int:case_id>/comments/<int:comment_id>/archive", methods=["POST"])
+def archive_comment(case_id, comment_id):
+    """Hide or restore a comment. The author or a manager/Administrator can do this."""
+    user = current_user()
+    if user is None:
+        return redirect(url_for("login"))
+    conn = get_db()
+    case = load_case_or_404(conn, user, case_id)
+    comment = conn.execute(
+        "SELECT * FROM comments WHERE id = ? AND case_id = ?", (comment_id, case_id)
+    ).fetchone()
+    if comment is None:
+        conn.close()
+        abort(404)
+    if comment["author_id"] != user["id"] and not can_override(user, case):
+        conn.close()
+        abort(403)
+    if request.form.get("action") == "restore":
+        conn.execute(
+            "UPDATE comments SET archived_at = NULL, archived_by = NULL WHERE id = ?",
+            (comment_id,),
+        )
+        flash("Comment restored.", "success")
+    else:
+        conn.execute(
+            "UPDATE comments SET archived_at = CURRENT_TIMESTAMP, archived_by = ? WHERE id = ?",
+            (user["id"], comment_id),
+        )
+        flash("Comment archived. Use Show archived to see it.", "success")
+    conn.commit()
+    conn.close()
+    return redirect(url_for(
+        "case_detail", case_id=case_id,
+        comments=("all" if request.form.get("show") == "all" else None),
+    ))
 
 
 @app.route("/notifications")

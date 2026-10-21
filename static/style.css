@@ -579,3 +579,20 @@ button.secondary:hover { background: var(--indigo-tint); }
 .settings-card { max-width: 720px; }
 .settings-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 14px 0; border-bottom: 1px solid var(--line); }
 .settings-card .btn { margin-top: 18px; }
+
+
+/* ---------- Comments ---------- */
+.main-stack { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
+.comments-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.comment-form { margin-top: 12px; }
+.comment-form textarea { min-height: 72px; }
+.comment-form button { margin-top: 10px; }
+.comment-list { list-style: none; margin: 18px 0 0; padding: 0; }
+.comment { display: flex; gap: 12px; padding: 14px 0; border-top: 1px solid var(--line); }
+.comment.is-archived { opacity: 0.6; }
+.comment-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 0.9rem; }
+.comment-stamp { padding: 1px 7px; border-radius: 6px; background: var(--indigo-tint); color: var(--indigo); font-size: 0.72rem; font-weight: 700; letter-spacing: 0.04em; }
+.comment-body { margin-top: 4px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.comment-action { margin-top: 4px; }
+.link-button { margin: 0; padding: 0; width: auto; background: none; border: 0; box-shadow: none; color: var(--indigo); font-size: 0.82rem; font-weight: 600; cursor: pointer; }
+.link-button:hover { text-decoration: underline; background: none; }
