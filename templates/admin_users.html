@@ -18,7 +18,7 @@
         <th>Person</th>
         <th>Role</th>
         {% for key, (label, help) in permissions.items() %}<th>{{ label }}</th>{% endfor %}
-        <th>Administrator also works as</th>
+        <th>Additional Roles?</th>
         <th></th>
       </tr>
     </thead>
@@ -45,10 +45,11 @@
           {% endfor %}
           <td>
             {% if p['role'] == 'Administrator' %}
-              <div class="seg" role="radiogroup" aria-label="Second role for {{ p['name'] }}">
-                <label><input type="radio" name="also_role" value="Analyst" form="perm-{{ p['id'] }}" {% if p['also_role'] != 'Manager' %}checked{% endif %}><span>Contributor</span></label>
-                <label><input type="radio" name="also_role" value="Manager" form="perm-{{ p['id'] }}" {% if p['also_role'] == 'Manager' %}checked{% endif %}><span>Manager</span></label>
-              </div>
+              <select class="role-select" name="also_role" form="perm-{{ p['id'] }}" aria-label="Additional roles for {{ p['name'] }}">
+                <option value="None" {% if p['also_role'] not in ('Analyst', 'Manager') %}selected{% endif %}>None</option>
+                <option value="Analyst" {% if p['also_role'] == 'Analyst' %}selected{% endif %}>Contributor</option>
+                <option value="Manager" {% if p['also_role'] == 'Manager' %}selected{% endif %}>Manager</option>
+              </select>
             {% else %}
               <span class="muted-sm">—</span>
             {% endif %}
@@ -62,6 +63,6 @@
 
 <p class="muted-sm perm-note">
   {% for key, (label, help) in permissions.items() %}<strong>{{ label }}:</strong> {{ help }} {% endfor %}
-  <strong>Administrator also works as:</strong> choose Manager to appear in the Manager list when projects are created, or Contributor to stay out of it.
+  <strong>Additional Roles?</strong> An Administrator can be just an Administrator (None). Choose Manager to appear in the Manager list when projects are created. Contributor and None both stay out of that list.
 </p>
 {% endblock %}

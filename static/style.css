@@ -494,6 +494,7 @@ button.secondary:hover { background: var(--indigo-tint); }
 .seg input:checked + span { background: var(--white); color: var(--text); box-shadow: 0 1px 3px rgba(30, 41, 59, 0.18); }
 .seg.toggle input[value="on"]:checked + span { background: var(--indigo); color: #fff; }
 .seg input:focus-visible + span { outline: 2px solid var(--indigo); outline-offset: 1px; }
+.role-select { width: auto; min-width: 150px; padding: 8px 12px; }
 .seg-locked { display: inline-block; padding: 5px 14px; border-radius: 999px; font-size: 0.82rem; font-weight: 600; background: var(--indigo-tint); color: var(--indigo); }
 .perm-note { margin-top: 14px; }
 .case-table td .avatar { margin-right: 8px; vertical-align: middle; }

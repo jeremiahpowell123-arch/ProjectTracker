@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS users (
     initials TEXT NOT NULL,
     role TEXT NOT NULL,
     password_hash TEXT NOT NULL,
-    also_role TEXT NOT NULL DEFAULT 'Analyst'
+    also_role TEXT NOT NULL DEFAULT 'None'
 );
 
 CREATE TABLE IF NOT EXISTS user_permissions (
@@ -84,7 +84,7 @@ def init_db():
     user_columns = {r["name"] for r in conn.execute("PRAGMA table_info(users)")}
     if "also_role" not in user_columns:
         conn.execute(
-            "ALTER TABLE users ADD COLUMN also_role TEXT NOT NULL DEFAULT 'Analyst'"
+            "ALTER TABLE users ADD COLUMN also_role TEXT NOT NULL DEFAULT 'None'"
         )
 
     user_count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]

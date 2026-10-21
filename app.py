@@ -67,8 +67,8 @@ def role_label(role):
 
 @app.template_filter("role_display")
 def role_display(user):
-    """A person's role as shown on screen. Administrators also show their second role."""
-    if user["role"] == "Administrator":
+    """A person's role as shown on screen. Administrators also show any additional role."""
+    if user["role"] == "Administrator" and user["also_role"] in ("Analyst", "Manager"):
         return f"Administrator · {role_label(user['also_role'])}"
     return role_label(user["role"])
 
@@ -582,9 +582,9 @@ def update_permissions(person_id):
             "INSERT INTO user_permissions (user_id, permission) VALUES (?, ?)",
             (person_id, p),
         )
-    # Administrators can also work as a Contributor or as a Manager.
+    # Administrators can have no additional role, or also work as a Contributor or Manager.
     also_role = request.form.get("also_role", "")
-    if person["role"] == "Administrator" and also_role in ("Analyst", "Manager"):
+    if person["role"] == "Administrator" and also_role in ("None", "Analyst", "Manager"):
         conn.execute("UPDATE users SET also_role = ? WHERE id = ?", (also_role, person_id))
     conn.commit()
     conn.close()
