@@ -1,0 +1,25 @@
+{% extends "app_base.html" %}
+{% block title %}Notification settings · ProjectTracker{% endblock %}
+{% block content %}
+<a class="back" href="{{ url_for('notifications') }}">← Back to notifications</a>
+<div class="page-head">
+  <h1>Notification settings</h1>
+  <p class="muted">Choose which updates you want in your inbox. Out-of-scope requests waiting for your approval always appear, even when everything here is off.</p>
+</div>
+
+<form method="post" class="card panel settings-card">
+  {% for key, (label, help) in categories.items() %}
+    <div class="settings-row">
+      <div>
+        <strong>{{ label }}</strong>
+        <div class="muted-sm">{{ help }}</div>
+      </div>
+      <div class="seg toggle" role="radiogroup" aria-label="{{ label }}">
+        <label><input type="radio" name="cat_{{ key }}" value="off" {% if not prefs[key] %}checked{% endif %}><span>Off</span></label>
+        <label><input type="radio" name="cat_{{ key }}" value="on" {% if prefs[key] %}checked{% endif %}><span>On</span></label>
+      </div>
+    </div>
+  {% endfor %}
+  <button class="btn" type="submit">Save settings</button>
+</form>
+{% endblock %}

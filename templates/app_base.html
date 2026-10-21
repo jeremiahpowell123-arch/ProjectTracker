@@ -34,9 +34,15 @@
         {% if request.args.get('view') %}<input type="hidden" name="view" value="{{ request.args.get('view') }}">{% endif %}
         {% if request.args.get('mine') %}<input type="hidden" name="mine" value="{{ request.args.get('mine') }}">{% endif %}
       </form>
+            <div class="topbar-actions">
+      {% set unread_total = bell_count(user) %}
+      <a class="bell {% if active_nav == 'inbox' %}active{% endif %}" href="{{ url_for('notifications') }}" aria-label="Notifications{% if unread_total %}, {{ unread_total }} waiting{% endif %}">
+        {{ icon('bell') }}{% if unread_total %}<span class="bell-badge">{{ unread_total if unread_total < 100 else '99+' }}</span>{% endif %}
+      </a>
       {% if has_permission(user, 'create_projects') %}
         <a class="btn" href="{{ url_for('new_case') }}">{{ icon('plus') }}<span>New Project</span></a>
       {% endif %}
+      </div>
     </header>
 
     <main class="content">

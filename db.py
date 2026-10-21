@@ -94,6 +94,26 @@ CREATE TABLE IF NOT EXISTS history (
     detail TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS notifications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    case_id INTEGER NOT NULL REFERENCES cases(id),
+    actor_id INTEGER REFERENCES users(id),
+    category TEXT NOT NULL,
+    message TEXT NOT NULL,
+    note TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    read_at TEXT
+);
+
+-- Only the choices a person has made are stored. No row means the category is on.
+CREATE TABLE IF NOT EXISTS notification_prefs (
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    category TEXT NOT NULL,
+    enabled INTEGER NOT NULL,
+    PRIMARY KEY (user_id, category)
+);
 """
 
 

@@ -1,0 +1,58 @@
+{% extends "app_base.html" %}
+{% block title %}Notifications · ProjectTracker{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Notifications</h1>
+  <p class="muted">Updates on projects you own or manage.</p>
+</div>
+
+<div class="toolbar">
+  <span class="muted-sm">{{ unread }} unread</span>
+  <div class="inbox-actions">
+    {% if unread %}
+      <form method="post" action="{{ url_for('read_all_notifications') }}">
+        <button class="btn small secondary" type="submit">Mark all read</button>
+      </form>
+    {% endif %}
+    <a class="link" href="{{ url_for('notification_settings') }}">Settings</a>
+  </div>
+</div>
+
+{% if waiting %}
+  <section class="card panel inbox-waiting">
+    <h2>Needs your approval</h2>
+    <p class="muted-sm">These stay here until you approve or decline them. They can't be turned off.</p>
+    <ul class="inbox-list">
+      {% for c in waiting %}
+        <li class="inbox-item unread">
+          <span class="inbox-dot"></span>
+          <div class="inbox-body">
+            <a class="inbox-link" href="{{ url_for('case_detail', case_id=c['id']) }}">Out-of-scope request on {{ c['customer_name'] }}</a>
+            <div class="activity-time">Open the project to approve or decline</div>
+          </div>
+        </li>
+      {% endfor %}
+    </ul>
+  </section>
+{% endif %}
+
+<section class="card panel">
+  <h2>Recent</h2>
+  {% if items %}
+    <ul class="inbox-list">
+      {% for n in items %}
+        <li class="inbox-item {% if not n['read_at'] %}unread{% endif %}">
+          <span class="inbox-dot"></span>
+          <div class="inbox-body">
+            <a class="inbox-link" href="{{ url_for('open_notification', note_id=n['id']) }}">{{ n['message'] }}</a>
+            {% if n['note'] %}<div class="activity-reason">Reason: {{ n['note'] }}</div>{% endif %}
+            <div class="activity-time">{{ n['created_at']|pretty_time }}</div>
+          </div>
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p class="muted-sm">Nothing yet. Updates on your projects will show up here.</p>
+  {% endif %}
+</section>
+{% endblock %}

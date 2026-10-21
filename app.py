@@ -199,12 +199,99 @@ CASE_QUERY = """
 """
 
 
+NOTIFICATION_CATEGORIES = {
+    "assigned": ("Assignments", "You are made the owner or manager of a project, or an owner is changed."),
+    "progress": ("Progress", "A stage status changes or a manager overrides one on your projects."),
+    "scope": ("Out of scope", "An out-of-scope request is approved, declined, withdrawn, or the scope changes."),
+    "lifecycle": ("Archive", "Your projects are archived or reopened."),
+}
+
+# What each logged action says in a notification, and which category it belongs to.
+# scope_request is left out on purpose: it is shown as "Needs your approval" instead,
+# and that cannot be turned off.
+NOTIFY_ACTIONS = {
+    "status_change": ("progress", "{actor} changed {head} on {case}"),
+    "override_status": ("progress", "{actor} overrode {head} on {case}"),
+    "scope_approve": ("scope", "{actor} approved {head} on {case}"),
+    "scope_decline": ("scope", "{actor} declined {head} on {case}"),
+    "scope_withdraw": ("scope", "{actor} withdrew {head} on {case}"),
+    "scope_out": ("scope", "{actor} marked {case} out of scope"),
+    "scope_return": ("scope", "{actor} returned {case} to scope"),
+    "archived": ("lifecycle", "{case} was archived"),
+    "reopen": ("lifecycle", "{actor} reopened {case}"),
+}
+
+
+def category_enabled(conn, user_id, category):
+    row = conn.execute(
+        "SELECT enabled FROM notification_prefs WHERE user_id = ? AND category = ?",
+        (user_id, category),
+    ).fetchone()
+    return row is None or row["enabled"] == 1
+
+
+def notify(conn, user_ids, case_id, actor_id, category, message, note=None):
+    """Add one notification for each person who has this category turned on."""
+    for uid in set(user_ids):
+        if uid is None or uid == actor_id:
+            continue
+        if not category_enabled(conn, uid, category):
+            continue
+        conn.execute(
+            "INSERT INTO notifications (user_id, case_id, actor_id, category, message, note) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (uid, case_id, actor_id, category, message, note),
+        )
+
+
+def notify_for_action(conn, case_id, actor_id, action, detail):
+    rule = NOTIFY_ACTIONS.get(action)
+    if rule is None:
+        return
+    category, template = rule
+    case = conn.execute(
+        "SELECT customer_name, owner_id, manager_id FROM cases WHERE id = ?", (case_id,)
+    ).fetchone()
+    actor = conn.execute("SELECT name FROM users WHERE id = ?", (actor_id,)).fetchone()
+    head, _, note = detail.partition(" | Reason: ")
+    message = template.format(actor=actor["name"], head=head, case=case["customer_name"])
+    notify(conn, [case["owner_id"], case["manager_id"]], case_id, actor_id,
+           category, message, note or None)
+
+
 def log_history(conn, case_id, actor_id, action, detail):
-    """Write one line to a project's read-only history."""
+    """Write one line to a project's read-only history, and notify the right people."""
     conn.execute(
         "INSERT INTO history (case_id, actor_id, action, detail) VALUES (?, ?, ?, ?)",
         (case_id, actor_id, action, detail),
     )
+    notify_for_action(conn, case_id, actor_id, action, detail)
+
+
+def pending_approvals(conn, user):
+    """Out-of-scope requests this person can decide."""
+    sql = (
+        "SELECT id, customer_name FROM cases "
+        "WHERE scope_state = 'pending' AND archived_at IS NULL"
+    )
+    if user["role"] == "Administrator":
+        return conn.execute(sql + " ORDER BY scope_at").fetchall()
+    return conn.execute(
+        sql + " AND manager_id = ? ORDER BY scope_at", (user["id"],)
+    ).fetchall()
+
+
+@app.template_global("bell_count")
+def bell_count(user):
+    """Unread notifications plus requests waiting for this person's decision."""
+    conn = get_db()
+    unread = conn.execute(
+        "SELECT COUNT(*) FROM notifications WHERE user_id = ? AND read_at IS NULL",
+        (user["id"],),
+    ).fetchone()[0]
+    waiting = len(pending_approvals(conn, user))
+    conn.close()
+    return unread + waiting
 
 
 def get_case_for(conn, user, case_id):
@@ -501,6 +588,10 @@ def new_case():
                 conn, case_id, user["id"], "created",
                 f'the project ({chosen_type["name"]})',
             )
+            notify(conn, [int(owner_id)], case_id, user["id"], "assigned",
+                   f'{user["name"]} made you the owner of {customer}')
+            notify(conn, [int(manager_id)], case_id, user["id"], "assigned",
+                   f'{user["name"]} made you the manager of {customer}')
             conn.commit()
             conn.close()
             flash(f"Project created: {customer}.", "success")
@@ -705,6 +796,11 @@ def reassign_owner(case_id):
             conn, case_id, user["id"], "reassign",
             f'the owner from {case["owner_name"]} to {new_owner["name"]} | Reason: {reason}',
         )
+        notify(conn, [new_owner["id"]], case_id, user["id"], "assigned",
+               f'{user["name"]} made you the owner of {case["customer_name"]}', reason)
+        notify(conn, [case["owner_id"], case["manager_id"]], case_id, user["id"], "assigned",
+               f'{user["name"]} moved {case["customer_name"]} from {case["owner_name"]} '
+               f'to {new_owner["name"]}', reason)
         conn.commit()
         flash(f'Project reassigned to {new_owner["name"]}.', "success")
     conn.close()
@@ -919,6 +1015,91 @@ def reopen_case(case_id):
         flash("Project reopened. It is back on the board.", "success")
     conn.close()
     return back_to_case(case_id)
+
+
+@app.route("/notifications")
+def notifications():
+    user = current_user()
+    if user is None:
+        return redirect(url_for("login"))
+    conn = get_db()
+    waiting = pending_approvals(conn, user)
+    items = conn.execute(
+        "SELECT n.*, u.name AS actor_name, u.initials AS actor_initials "
+        "FROM notifications n LEFT JOIN users u ON u.id = n.actor_id "
+        "WHERE n.user_id = ? ORDER BY n.id DESC LIMIT 100",
+        (user["id"],),
+    ).fetchall()
+    unread = sum(1 for n in items if n["read_at"] is None)
+    conn.close()
+    return render_template(
+        "notifications.html", user=user, waiting=waiting, items=items,
+        unread=unread, active_nav="inbox",
+    )
+
+
+@app.route("/notifications/<int:note_id>/open")
+def open_notification(note_id):
+    """Mark one notification read and go to its project."""
+    user = current_user()
+    if user is None:
+        return redirect(url_for("login"))
+    conn = get_db()
+    note = conn.execute(
+        "SELECT * FROM notifications WHERE id = ? AND user_id = ?", (note_id, user["id"])
+    ).fetchone()
+    if note is None:
+        conn.close()
+        abort(404)
+    conn.execute(
+        "UPDATE notifications SET read_at = CURRENT_TIMESTAMP "
+        "WHERE id = ? AND read_at IS NULL", (note_id,),
+    )
+    conn.commit()
+    conn.close()
+    return redirect(url_for("case_detail", case_id=note["case_id"]))
+
+
+@app.route("/notifications/read-all", methods=["POST"])
+def read_all_notifications():
+    user = current_user()
+    if user is None:
+        return redirect(url_for("login"))
+    conn = get_db()
+    conn.execute(
+        "UPDATE notifications SET read_at = CURRENT_TIMESTAMP "
+        "WHERE user_id = ? AND read_at IS NULL", (user["id"],),
+    )
+    conn.commit()
+    conn.close()
+    return redirect(url_for("notifications"))
+
+
+@app.route("/notifications/settings", methods=["GET", "POST"])
+def notification_settings():
+    user = current_user()
+    if user is None:
+        return redirect(url_for("login"))
+    conn = get_db()
+    if request.method == "POST":
+        for key in NOTIFICATION_CATEGORIES:
+            enabled = 0 if request.form.get(f"cat_{key}") == "off" else 1
+            conn.execute(
+                "INSERT INTO notification_prefs (user_id, category, enabled) "
+                "VALUES (?, ?, ?) "
+                "ON CONFLICT(user_id, category) DO UPDATE SET enabled = excluded.enabled",
+                (user["id"], key, enabled),
+            )
+        conn.commit()
+        conn.close()
+        flash("Notification settings saved.", "success")
+        return redirect(url_for("notification_settings"))
+    prefs = {key: category_enabled(conn, user["id"], key) for key in NOTIFICATION_CATEGORIES}
+    conn.close()
+    return render_template(
+        "notification_settings.html", user=user, categories=NOTIFICATION_CATEGORIES,
+        prefs=prefs, active_nav="inbox",
+    )
 
 
 @app.route("/archive")
