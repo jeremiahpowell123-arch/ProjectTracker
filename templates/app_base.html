@@ -12,7 +12,7 @@
         <div class="nav-label">Admin</div>
         <span class="nav-link disabled">{{ icon('layers') }}<span>Workflows</span><em>Soon</em></span>
         <span class="nav-link disabled">{{ icon('tag') }}<span>Tags</span><em>Soon</em></span>
-        <span class="nav-link disabled">{{ icon('users') }}<span>Users</span><em>Soon</em></span>
+        <a class="nav-link {% if active_nav == 'users' %}active{% endif %}" href="{{ url_for('admin_users') }}">{{ icon('users') }}<span>Users</span></a>
       {% endif %}
     </nav>
 
@@ -20,7 +20,7 @@
       <span class="avatar {{ user['id']|avatar_class }}">{{ user["initials"] }}</span>
       <div class="who-text">
         <strong>{{ user["name"] }}</strong>
-        <span>{{ user["role"]|role_label }}</span>
+        <span>{{ user|role_display }}</span>
       </div>
       <a class="signout" href="{{ url_for('logout') }}">Sign out</a>
     </div>
@@ -34,7 +34,7 @@
         {% if request.args.get('view') %}<input type="hidden" name="view" value="{{ request.args.get('view') }}">{% endif %}
         {% if request.args.get('mine') %}<input type="hidden" name="mine" value="{{ request.args.get('mine') }}">{% endif %}
       </form>
-      {% if user["role"] == "Administrator" %}
+      {% if has_permission(user, 'create_projects') %}
         <a class="btn" href="{{ url_for('new_case') }}">{{ icon('plus') }}<span>New Project</span></a>
       {% endif %}
     </header>

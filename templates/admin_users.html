@@ -1,0 +1,67 @@
+{% extends "app_base.html" %}
+{% block title %}Users · ProjectTracker{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Users &amp; permissions</h1>
+  <p class="muted">Everyone gets the abilities that come with their role. Switch extra permissions on for individual people, such as a team lead who can create projects, then click Save.</p>
+</div>
+
+{# The empty forms come first so each switch is tied to its person's form as the page loads. #}
+{% for row in rows %}
+  <form method="post" id="perm-{{ row.user['id'] }}" action="{{ url_for('update_permissions', person_id=row.user['id']) }}"></form>
+{% endfor %}
+
+<div class="card table-wrap">
+  <table class="case-table">
+    <thead>
+      <tr>
+        <th>Person</th>
+        <th>Role</th>
+        {% for key, (label, help) in permissions.items() %}<th>{{ label }}</th>{% endfor %}
+        <th>Administrator also works as</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+        {% set p = row.user %}
+        <tr>
+          <td>
+            <span class="avatar sm {{ p['id']|avatar_class }}">{{ p['initials'] }}</span>
+            <strong>{{ p['name'] }}</strong>
+          </td>
+          <td>{{ p|role_display }}</td>
+          {% for key, (label, help) in permissions.items() %}
+            <td>
+              {% if key in row.inherited %}
+                <span class="seg-locked">On</span> <span class="muted-sm">Included with role</span>
+              {% else %}
+                <div class="seg toggle" role="radiogroup" aria-label="{{ label }} for {{ p['name'] }}">
+                  <label><input type="radio" name="perm_{{ key }}" value="off" form="perm-{{ p['id'] }}" {% if key not in row.effective %}checked{% endif %}><span>Off</span></label>
+                  <label><input type="radio" name="perm_{{ key }}" value="on" form="perm-{{ p['id'] }}" {% if key in row.effective %}checked{% endif %}><span>On</span></label>
+                </div>
+              {% endif %}
+            </td>
+          {% endfor %}
+          <td>
+            {% if p['role'] == 'Administrator' %}
+              <div class="seg" role="radiogroup" aria-label="Second role for {{ p['name'] }}">
+                <label><input type="radio" name="also_role" value="Analyst" form="perm-{{ p['id'] }}" {% if p['also_role'] != 'Manager' %}checked{% endif %}><span>Contributor</span></label>
+                <label><input type="radio" name="also_role" value="Manager" form="perm-{{ p['id'] }}" {% if p['also_role'] == 'Manager' %}checked{% endif %}><span>Manager</span></label>
+              </div>
+            {% else %}
+              <span class="muted-sm">—</span>
+            {% endif %}
+          </td>
+          <td>{% if row.editable %}<button class="btn small" type="submit" form="perm-{{ p['id'] }}">Save</button>{% endif %}</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<p class="muted-sm perm-note">
+  {% for key, (label, help) in permissions.items() %}<strong>{{ label }}:</strong> {{ help }} {% endfor %}
+  <strong>Administrator also works as:</strong> choose Manager to appear in the Manager list when projects are created, or Contributor to stay out of it.
+</p>
+{% endblock %}

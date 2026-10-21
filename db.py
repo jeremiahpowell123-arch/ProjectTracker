@@ -18,7 +18,14 @@ CREATE TABLE IF NOT EXISTS users (
     username TEXT NOT NULL UNIQUE,
     initials TEXT NOT NULL,
     role TEXT NOT NULL,
-    password_hash TEXT NOT NULL
+    password_hash TEXT NOT NULL,
+    also_role TEXT NOT NULL DEFAULT 'Analyst'
+);
+
+CREATE TABLE IF NOT EXISTS user_permissions (
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    permission TEXT NOT NULL,
+    PRIMARY KEY (user_id, permission)
 );
 
 CREATE TABLE IF NOT EXISTS template_stages (
@@ -72,6 +79,13 @@ def get_db():
 def init_db():
     conn = get_db()
     conn.executescript(SCHEMA)
+
+    # Databases made before the second-role feature need the new column added.
+    user_columns = {r["name"] for r in conn.execute("PRAGMA table_info(users)")}
+    if "also_role" not in user_columns:
+        conn.execute(
+            "ALTER TABLE users ADD COLUMN also_role TEXT NOT NULL DEFAULT 'Analyst'"
+        )
 
     user_count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
     if user_count == 0:

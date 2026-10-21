@@ -24,12 +24,60 @@ STATUS_FILTERS = [
 # The database stores the role "Analyst". The screens show "Contributor".
 ROLE_LABELS = {"Analyst": "Contributor"}
 
+# What people can be granted. Administrators and Managers get some by default;
+# an Administrator can grant any of them to individual people on the Users screen.
+PERMISSIONS = {
+    "create_projects": (
+        "Create projects",
+        "Start new projects and choose the owner and manager.",
+    ),
+}
+ROLE_DEFAULTS = {
+    "Administrator": set(PERMISSIONS),
+    "Manager": {"create_projects"},
+    "Analyst": set(),
+}
+
 init_db()
+
+
+def permissions_of(user, conn=None):
+    """Everything this person may do: their role's defaults plus individual grants."""
+    own_conn = conn is None
+    if own_conn:
+        conn = get_db()
+    rows = conn.execute(
+        "SELECT permission FROM user_permissions WHERE user_id = ?", (user["id"],)
+    ).fetchall()
+    if own_conn:
+        conn.close()
+    granted = {r["permission"] for r in rows} & set(PERMISSIONS)
+    return ROLE_DEFAULTS.get(user["role"], set()) | granted
+
+
+@app.template_global("has_permission")
+def has_permission(user, permission):
+    return permission in permissions_of(user)
 
 
 @app.template_filter("role_label")
 def role_label(role):
     return ROLE_LABELS.get(role, role)
+
+
+@app.template_filter("role_display")
+def role_display(user):
+    """A person's role as shown on screen. Administrators also show their second role."""
+    if user["role"] == "Administrator":
+        return f"Administrator · {role_label(user['also_role'])}"
+    return role_label(user["role"])
+
+
+def is_manager(user):
+    """Managers, plus Administrators who also work as a Manager."""
+    return user["role"] == "Manager" or (
+        user["role"] == "Administrator" and user["also_role"] == "Manager"
+    )
 
 
 @app.template_filter("pretty_date")
@@ -244,17 +292,14 @@ def new_case():
     user = current_user()
     if user is None:
         return redirect(url_for("login"))
-    if user["role"] != "Administrator":
+    if not has_permission(user, "create_projects"):
         abort(403)
 
     conn = get_db()
     owners = conn.execute(
-        "SELECT id, name, role FROM users ORDER BY name"
+        "SELECT id, name, role, also_role FROM users ORDER BY name"
     ).fetchall()
-    managers = conn.execute(
-        "SELECT id, name, role FROM users "
-        "WHERE role IN ('Manager', 'Administrator') ORDER BY name"
-    ).fetchall()
+    managers = [p for p in owners if is_manager(p)]
     stages = conn.execute(
         "SELECT name, high_priority FROM template_stages "
         "WHERE active = 1 ORDER BY position"
@@ -479,6 +524,72 @@ def reassign_owner(case_id):
         flash(f'Project reassigned to {new_owner["name"]}.', "success")
     conn.close()
     return redirect(url_for("case_detail", case_id=case_id))
+
+
+@app.route("/admin/users")
+def admin_users():
+    user = current_user()
+    if user is None:
+        return redirect(url_for("login"))
+    if user["role"] != "Administrator":
+        abort(403)
+
+    conn = get_db()
+    people = conn.execute("SELECT * FROM users ORDER BY name").fetchall()
+    rows = []
+    for person in people:
+        inherited = ROLE_DEFAULTS.get(person["role"], set())
+        rows.append({
+            "user": person,
+            "inherited": inherited,
+            "effective": permissions_of(person, conn),
+            "editable": person["role"] == "Administrator"
+            or bool(set(PERMISSIONS) - inherited),
+        })
+    conn.close()
+    return render_template(
+        "admin_users.html",
+        user=user,
+        rows=rows,
+        permissions=PERMISSIONS,
+        active_nav="users",
+    )
+
+
+@app.route("/admin/users/<int:person_id>/permissions", methods=["POST"])
+def update_permissions(person_id):
+    user = current_user()
+    if user is None:
+        return redirect(url_for("login"))
+    if user["role"] != "Administrator":
+        abort(403)
+
+    conn = get_db()
+    person = conn.execute("SELECT * FROM users WHERE id = ?", (person_id,)).fetchone()
+    if person is None:
+        conn.close()
+        abort(404)
+
+    # Only individual grants are stored. Anything a role already includes is skipped.
+    inherited = ROLE_DEFAULTS.get(person["role"], set())
+    wanted = {
+        p for p in PERMISSIONS
+        if request.form.get(f"perm_{p}") == "on" and p not in inherited
+    }
+    conn.execute("DELETE FROM user_permissions WHERE user_id = ?", (person_id,))
+    for p in sorted(wanted):
+        conn.execute(
+            "INSERT INTO user_permissions (user_id, permission) VALUES (?, ?)",
+            (person_id, p),
+        )
+    # Administrators can also work as a Contributor or as a Manager.
+    also_role = request.form.get("also_role", "")
+    if person["role"] == "Administrator" and also_role in ("Analyst", "Manager"):
+        conn.execute("UPDATE users SET also_role = ? WHERE id = ?", (also_role, person_id))
+    conn.commit()
+    conn.close()
+    flash(f'Updated {person["name"]}.', "success")
+    return redirect(url_for("admin_users"))
 
 
 @app.route("/login", methods=["GET", "POST"])

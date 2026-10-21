@@ -27,8 +27,8 @@
   <div class="card empty">
     {% if status != 'all' or query or mine %}
       No projects match these filters.
-    {% elif user["role"] == "Administrator" %}
-      No projects yet. Click <strong>New Project</strong> to create the first one.
+    {% elif has_permission(user, 'create_projects') %}
+    No projects yet. Click <strong>New Project</strong> to create the first one.
     {% else %}
       No projects are assigned to you yet.
     {% endif %}
