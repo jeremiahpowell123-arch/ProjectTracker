@@ -10,8 +10,7 @@
       <a class="nav-link {% if active_nav == 'mine' %}active{% endif %}" href="{{ url_for('home', mine=1) }}">{{ icon('user') }}<span>My Projects</span></a>
       {% if user["role"] == "Administrator" %}
         <div class="nav-label">Admin</div>
-        <span class="nav-link disabled">{{ icon('layers') }}<span>Workflows</span><em>Soon</em></span>
-        <span class="nav-link disabled">{{ icon('tag') }}<span>Tags</span><em>Soon</em></span>
+        <a class="nav-link {% if active_nav == 'workflows' %}active{% endif %}" href="{{ url_for('admin_workflows') }}">{{ icon('layers') }}<span>Workflows</span></a>        <span class="nav-link disabled">{{ icon('tag') }}<span>Tags</span><em>Soon</em></span>
         <a class="nav-link {% if active_nav == 'users' %}active{% endif %}" href="{{ url_for('admin_users') }}">{{ icon('users') }}<span>Users</span></a>
       {% endif %}
     </nav>

@@ -1,4 +1,5 @@
 from datetime import date, datetime, timezone
+from functools import wraps
 
 from flask import (
     Flask, abort, flash, redirect, render_template, request, session, url_for,
@@ -176,6 +177,7 @@ CASE_QUERY = """
            o.initials AS owner_initials,
            m.name AS manager_name,
            m.initials AS manager_initials,
+           t.name AS type_name,
            (SELECT COUNT(*) FROM case_stages s
              WHERE s.case_id = c.id AND s.archived = 0) AS total_stages,
            (SELECT COUNT(*) FROM case_stages s
@@ -188,6 +190,7 @@ CASE_QUERY = """
     FROM cases c
     JOIN users o ON o.id = c.owner_id
     JOIN users m ON m.id = c.manager_id
+    LEFT JOIN project_types t ON t.id = c.type_id
 """
 
 
@@ -228,6 +231,49 @@ def clean_reason(text):
     return " ".join(text.split())[:MAX_REASON]
 
 
+MAX_NAME = 80
+
+
+def clean_name(text):
+    return " ".join(text.split())
+
+
+def name_problem(name):
+    if not name:
+        return "Please enter a name."
+    if len(name) > MAX_NAME:
+        return f"Names can be up to {MAX_NAME} characters."
+    return None
+
+
+def active_types_with_tasks(conn):
+    """Active project types, each with its active tasks in order."""
+    types = []
+    for t in conn.execute(
+        "SELECT * FROM project_types WHERE active = 1 ORDER BY position, id"
+    ).fetchall():
+        tasks = conn.execute(
+            "SELECT * FROM type_tasks WHERE type_id = ? AND active = 1 "
+            "ORDER BY position, id",
+            (t["id"],),
+        ).fetchall()
+        types.append({"id": t["id"], "name": t["name"], "tasks": tasks})
+    return types
+
+
+def admin_only(view):
+    """Wrap a route so only signed-in Administrators reach it."""
+    @wraps(view)
+    def wrapper(*args, **kwargs):
+        user = current_user()
+        if user is None:
+            return redirect(url_for("login"))
+        if user["role"] != "Administrator":
+            abort(403)
+        return view(user, *args, **kwargs)
+    return wrapper
+
+
 @app.route("/")
 def home():
     user = current_user()
@@ -242,6 +288,7 @@ def home():
         status = "all"
     query = request.args.get("q", "").strip()
     mine = request.args.get("mine") == "1"
+    type_arg = request.args.get("type", "")
 
     conn = get_db()
     if user["role"] == "Administrator":
@@ -251,15 +298,40 @@ def home():
             CASE_QUERY + " WHERE c.owner_id = ? OR c.manager_id = ? ORDER BY c.due_date",
             (user["id"], user["id"]),
         ).fetchall()
-    stage_names = [
-        r["name"]
-        for r in conn.execute(
-            "SELECT name FROM template_stages WHERE active = 1 ORDER BY position"
-        ).fetchall()
-    ]
+    active_types = active_types_with_tasks(conn)
+
+    # The type filter offers active types, plus any removed type a visible project still uses.
+    type_options = [{"id": t["id"], "name": t["name"]} for t in active_types]
+    listed = {t["id"] for t in type_options}
+    used = {r["type_id"] for r in rows if r["type_id"] is not None} - listed
+    for r in conn.execute("SELECT id, name FROM project_types ORDER BY name").fetchall():
+        if r["id"] in used:
+            type_options.append({"id": r["id"], "name": f'{r["name"]} (removed)'})
+    type_id = int(type_arg) if type_arg.isdigit() else None
+    if type_id not in {t["id"] for t in type_options}:
+        type_id = None
+
+    # Board columns: the tasks of the chosen type, or of every active type.
+    if type_id is not None:
+        stage_names = [
+            r["name"]
+            for r in conn.execute(
+                "SELECT name FROM type_tasks WHERE type_id = ? AND active = 1 "
+                "ORDER BY position, id",
+                (type_id,),
+            ).fetchall()
+        ]
+    else:
+        stage_names = []
+        for t in active_types:
+            for task in t["tasks"]:
+                if task["name"] not in stage_names:
+                    stage_names.append(task["name"])
     conn.close()
 
     cases = [due_info(row) for row in rows]
+    if type_id is not None:
+        cases = [c for c in cases if c["type_id"] == type_id]
     if mine:
         cases = [c for c in cases if user["id"] in (c["owner_id"], c["manager_id"])]
     if query:
@@ -281,6 +353,8 @@ def home():
         status=status,
         query=query,
         mine=mine,
+        type_id=type_id,
+        type_options=type_options,
         counts=counts,
         status_filters=STATUS_FILTERS,
         active_nav="mine" if mine else "all",
@@ -300,10 +374,8 @@ def new_case():
         "SELECT id, name, role, also_role FROM users ORDER BY name"
     ).fetchall()
     managers = [p for p in owners if is_manager(p)]
-    stages = conn.execute(
-        "SELECT name, high_priority FROM template_stages "
-        "WHERE active = 1 ORDER BY position"
-    ).fetchall()
+    # Only project types that have at least one task can be used.
+    types = [t for t in active_types_with_tasks(conn) if t["tasks"]]
 
     if request.method == "POST":
         customer = request.form.get("customer_name", "").strip()
@@ -311,31 +383,38 @@ def new_case():
         due = request.form.get("due_date", "")
         owner_id = request.form.get("owner_id", "")
         manager_id = request.form.get("manager_id", "")
+        chosen_type = next(
+            (t for t in types if str(t["id"]) == request.form.get("type_id", "")), None
+        )
 
         owner_ok = any(str(o["id"]) == owner_id for o in owners)
         manager_ok = any(str(m["id"]) == manager_id for m in managers)
 
         if not customer or risk not in RISK_LEVELS or not valid_date(due) \
-                or not owner_ok or not manager_ok:
+                or not owner_ok or not manager_ok or chosen_type is None:
             flash("Please complete every field.", "error")
         elif owner_id == manager_id:
             flash("The owner and manager must be different people.", "error")
         else:
             cursor = conn.execute(
                 "INSERT INTO cases "
-                "(customer_name, risk_rating, due_date, owner_id, manager_id, created_by) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (customer, risk, due, owner_id, manager_id, user["id"]),
+                "(customer_name, risk_rating, due_date, owner_id, manager_id, created_by, type_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (customer, risk, due, owner_id, manager_id, user["id"], chosen_type["id"]),
             )
             case_id = cursor.lastrowid
-            # Each project gets its own copy of the current master workflow.
+            # Each project gets its own frozen copy of the type's tasks as they are now.
+            # Later changes to the project type never reach projects already made.
             conn.execute(
                 "INSERT INTO case_stages (case_id, name, position, high_priority) "
-                "SELECT ?, name, position, high_priority FROM template_stages "
-                "WHERE active = 1 ORDER BY position",
-                (case_id,),
+                "SELECT ?, name, position, high_priority FROM type_tasks "
+                "WHERE type_id = ? AND active = 1 ORDER BY position, id",
+                (case_id, chosen_type["id"]),
             )
-            log_history(conn, case_id, user["id"], "created", "the project")
+            log_history(
+                conn, case_id, user["id"], "created",
+                f'the project ({chosen_type["name"]})',
+            )
             conn.commit()
             conn.close()
             flash(f"Project created: {customer}.", "success")
@@ -347,7 +426,7 @@ def new_case():
         user=user,
         owners=owners,
         managers=managers,
-        stages=stages,
+        types=types,
         risk_levels=RISK_LEVELS,
         form=request.form,
         active_nav="new",
@@ -590,6 +669,267 @@ def update_permissions(person_id):
     conn.close()
     flash(f'Updated {person["name"]}.', "success")
     return redirect(url_for("admin_users"))
+
+
+def back_to_workflows(type_id=None):
+    anchor = f"type-{type_id}" if type_id else None
+    return redirect(url_for("admin_workflows", _anchor=anchor))
+
+
+def type_name_taken(conn, name, except_id=0):
+    return conn.execute(
+        "SELECT 1 FROM project_types WHERE active = 1 AND lower(name) = lower(?) AND id != ?",
+        (name, except_id),
+    ).fetchone() is not None
+
+
+def task_name_taken(conn, type_id, name, except_id=0):
+    return conn.execute(
+        "SELECT 1 FROM type_tasks WHERE type_id = ? AND active = 1 "
+        "AND lower(name) = lower(?) AND id != ?",
+        (type_id, name, except_id),
+    ).fetchone() is not None
+
+
+def one_or_404(conn, sql, args):
+    row = conn.execute(sql, args).fetchone()
+    if row is None:
+        conn.close()
+        abort(404)
+    return row
+
+
+def next_task_position(conn, type_id):
+    return conn.execute(
+        "SELECT COALESCE(MAX(position), 0) + 1 FROM type_tasks "
+        "WHERE type_id = ? AND active = 1",
+        (type_id,),
+    ).fetchone()[0]
+
+
+@app.route("/admin/workflows")
+@admin_only
+def admin_workflows(user):
+    conn = get_db()
+    types = []
+    for t in conn.execute(
+        "SELECT * FROM project_types WHERE active = 1 ORDER BY position, id"
+    ).fetchall():
+        item = dict(t)
+        item["tasks"] = conn.execute(
+            "SELECT * FROM type_tasks WHERE type_id = ? AND active = 1 "
+            "ORDER BY position, id", (t["id"],),
+        ).fetchall()
+        item["removed_tasks"] = conn.execute(
+            "SELECT * FROM type_tasks WHERE type_id = ? AND active = 0 ORDER BY id DESC",
+            (t["id"],),
+        ).fetchall()
+        item["case_count"] = conn.execute(
+            "SELECT COUNT(*) FROM cases WHERE type_id = ?", (t["id"],)
+        ).fetchone()[0]
+        types.append(item)
+    removed_types = conn.execute(
+        "SELECT * FROM project_types WHERE active = 0 ORDER BY name"
+    ).fetchall()
+    conn.close()
+    return render_template(
+        "admin_workflows.html",
+        user=user,
+        types=types,
+        removed_types=removed_types,
+        active_nav="workflows",
+    )
+
+
+@app.route("/admin/workflows/types", methods=["POST"])
+@admin_only
+def create_type(user):
+    conn = get_db()
+    name = clean_name(request.form.get("name", ""))
+    problem = name_problem(name)
+    if problem is None and type_name_taken(conn, name):
+        problem = f'A project type named "{name}" already exists.'
+    if problem:
+        conn.close()
+        flash(problem, "error")
+        return back_to_workflows()
+    position = conn.execute(
+        "SELECT COALESCE(MAX(position), 0) + 1 FROM project_types"
+    ).fetchone()[0]
+    type_id = conn.execute(
+        "INSERT INTO project_types (name, position) VALUES (?, ?)", (name, position)
+    ).lastrowid
+    conn.commit()
+    conn.close()
+    flash(f'Project type "{name}" added. Add its tasks below.', "success")
+    return back_to_workflows(type_id)
+
+
+@app.route("/admin/workflows/types/<int:type_id>/rename", methods=["POST"])
+@admin_only
+def rename_type(user, type_id):
+    conn = get_db()
+    one_or_404(conn, "SELECT id FROM project_types WHERE id = ? AND active = 1", (type_id,))
+    name = clean_name(request.form.get("name", ""))
+    problem = name_problem(name)
+    if problem is None and type_name_taken(conn, name, type_id):
+        problem = f'A project type named "{name}" already exists.'
+    if problem:
+        flash(problem, "error")
+    else:
+        conn.execute("UPDATE project_types SET name = ? WHERE id = ?", (name, type_id))
+        conn.commit()
+        flash(f'Project type renamed to "{name}".', "success")
+    conn.close()
+    return back_to_workflows(type_id)
+
+
+@app.route("/admin/workflows/types/<int:type_id>/remove", methods=["POST"])
+@admin_only
+def remove_type(user, type_id):
+    conn = get_db()
+    t = one_or_404(conn, "SELECT * FROM project_types WHERE id = ? AND active = 1", (type_id,))
+    others = conn.execute(
+        "SELECT COUNT(*) FROM project_types WHERE active = 1 AND id != ?", (type_id,)
+    ).fetchone()[0]
+    if others == 0:
+        flash("At least one project type must stay active.", "error")
+    else:
+        conn.execute("UPDATE project_types SET active = 0 WHERE id = ?", (type_id,))
+        conn.commit()
+        flash(
+            f'"{t["name"]}" removed. Existing projects keep their tasks, '
+            "and you can restore it below.", "success",
+        )
+    conn.close()
+    return back_to_workflows()
+
+
+@app.route("/admin/workflows/types/<int:type_id>/restore", methods=["POST"])
+@admin_only
+def restore_type(user, type_id):
+    conn = get_db()
+    t = one_or_404(conn, "SELECT * FROM project_types WHERE id = ? AND active = 0", (type_id,))
+    if type_name_taken(conn, t["name"], type_id):
+        flash(f'Rename the active "{t["name"]}" type first, then restore this one.', "error")
+        conn.close()
+        return back_to_workflows()
+    position = conn.execute(
+        "SELECT COALESCE(MAX(position), 0) + 1 FROM project_types"
+    ).fetchone()[0]
+    conn.execute(
+        "UPDATE project_types SET active = 1, position = ? WHERE id = ?", (position, type_id)
+    )
+    conn.commit()
+    conn.close()
+    flash(f'"{t["name"]}" restored.', "success")
+    return back_to_workflows(type_id)
+
+
+@app.route("/admin/workflows/types/<int:type_id>/tasks", methods=["POST"])
+@admin_only
+def add_task(user, type_id):
+    conn = get_db()
+    one_or_404(conn, "SELECT id FROM project_types WHERE id = ? AND active = 1", (type_id,))
+    name = clean_name(request.form.get("name", ""))
+    high = 1 if request.form.get("high_priority") == "on" else 0
+    problem = name_problem(name)
+    if problem is None and task_name_taken(conn, type_id, name):
+        problem = f'This project type already has a task named "{name}".'
+    if problem:
+        flash(problem, "error")
+    else:
+        conn.execute(
+            "INSERT INTO type_tasks (type_id, name, position, high_priority) "
+            "VALUES (?, ?, ?, ?)",
+            (type_id, name, next_task_position(conn, type_id), high),
+        )
+        conn.commit()
+        flash(f'Task "{name}" added. New projects of this type will include it.', "success")
+    conn.close()
+    return back_to_workflows(type_id)
+
+
+@app.route("/admin/workflows/tasks/<int:task_id>/update", methods=["POST"])
+@admin_only
+def update_task(user, task_id):
+    conn = get_db()
+    task = one_or_404(conn, "SELECT * FROM type_tasks WHERE id = ? AND active = 1", (task_id,))
+    name = clean_name(request.form.get("name", ""))
+    high = 1 if request.form.get("high_priority") == "on" else 0
+    problem = name_problem(name)
+    if problem is None and task_name_taken(conn, task["type_id"], name, task_id):
+        problem = f'This project type already has a task named "{name}".'
+    if problem:
+        flash(problem, "error")
+    else:
+        conn.execute(
+            "UPDATE type_tasks SET name = ?, high_priority = ? WHERE id = ?",
+            (name, high, task_id),
+        )
+        conn.commit()
+        flash(f'Task "{name}" saved. Projects already in progress are not changed.', "success")
+    conn.close()
+    return back_to_workflows(task["type_id"])
+
+
+@app.route("/admin/workflows/tasks/<int:task_id>/move", methods=["POST"])
+@admin_only
+def move_task(user, task_id):
+    direction = request.form.get("direction", "")
+    if direction not in ("up", "down"):
+        abort(400)
+    conn = get_db()
+    task = one_or_404(conn, "SELECT * FROM type_tasks WHERE id = ? AND active = 1", (task_id,))
+    order = [
+        r["id"]
+        for r in conn.execute(
+            "SELECT id FROM type_tasks WHERE type_id = ? AND active = 1 "
+            "ORDER BY position, id", (task["type_id"],),
+        ).fetchall()
+    ]
+    i = order.index(task_id)
+    j = i - 1 if direction == "up" else i + 1
+    if 0 <= j < len(order):
+        order[i], order[j] = order[j], order[i]
+        for position, tid in enumerate(order, start=1):
+            conn.execute("UPDATE type_tasks SET position = ? WHERE id = ?", (position, tid))
+        conn.commit()
+    conn.close()
+    return back_to_workflows(task["type_id"])
+
+
+@app.route("/admin/workflows/tasks/<int:task_id>/remove", methods=["POST"])
+@admin_only
+def remove_task(user, task_id):
+    conn = get_db()
+    task = one_or_404(conn, "SELECT * FROM type_tasks WHERE id = ? AND active = 1", (task_id,))
+    conn.execute("UPDATE type_tasks SET active = 0 WHERE id = ?", (task_id,))
+    conn.commit()
+    conn.close()
+    flash(
+        f'Task "{task["name"]}" removed from new projects. '
+        "Projects already in progress keep it.", "success",
+    )
+    return back_to_workflows(task["type_id"])
+
+
+@app.route("/admin/workflows/tasks/<int:task_id>/restore", methods=["POST"])
+@admin_only
+def restore_task(user, task_id):
+    conn = get_db()
+    task = one_or_404(conn, "SELECT * FROM type_tasks WHERE id = ? AND active = 0", (task_id,))
+    if task_name_taken(conn, task["type_id"], task["name"]):
+        flash(f'This project type already has a task named "{task["name"]}".', "error")
+    else:
+        conn.execute(
+            "UPDATE type_tasks SET active = 1, position = ? WHERE id = ?",
+            (next_task_position(conn, task["type_id"]), task_id),
+        )
+        conn.commit()
+        flash(f'Task "{task["name"]}" restored at the end of the list.', "success")
+    conn.close()
+    return back_to_workflows(task["type_id"])
 
 
 @app.route("/login", methods=["GET", "POST"])

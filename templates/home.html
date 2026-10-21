@@ -10,25 +10,39 @@
   <div class="pills" role="group" aria-label="Filter by status">
     {% for key, label in status_filters %}
       <a class="pill-link {% if status == key %}active{% endif %}"
-         href="{{ url_for('home', status=(key if key != 'all' else None), view=(view if view != 'board' else None), q=(query or None), mine=(1 if mine else None)) }}">
+         href="{{ url_for('home', status=(key if key != 'all' else None), view=(view if view != 'board' else None), q=(query or None), mine=(1 if mine else None), type=type_id) }}">
         {{ label }} <span class="count">{{ counts[key] }}</span>
       </a>
     {% endfor %}
   </div>
+  <form class="type-filter" method="get" action="{{ url_for('home') }}">
+    <label class="sr-only" for="type-select">Project type</label>
+    <select id="type-select" name="type" onchange="this.form.submit()">
+      <option value="">All project types</option>
+      {% for t in type_options %}
+        <option value="{{ t.id }}" {% if t.id == type_id %}selected{% endif %}>{{ t.name }}</option>
+      {% endfor %}
+    </select>
+    {% if view != 'board' %}<input type="hidden" name="view" value="{{ view }}">{% endif %}
+    {% if status != 'all' %}<input type="hidden" name="status" value="{{ status }}">{% endif %}
+    {% if query %}<input type="hidden" name="q" value="{{ query }}">{% endif %}
+    {% if mine %}<input type="hidden" name="mine" value="1">{% endif %}
+    <noscript><button class="btn small" type="submit">Apply</button></noscript>
+  </form>
   <div class="segmented" role="group" aria-label="Choose a view">
     <a class="{% if view == 'board' %}active{% endif %}"
-       href="{{ url_for('home', status=(status if status != 'all' else None), q=(query or None), mine=(1 if mine else None)) }}">Board</a>
+       href="{{ url_for('home', status=(status if status != 'all' else None), q=(query or None), mine=(1 if mine else None), type=type_id) }}">Board</a>
     <a class="{% if view == 'list' %}active{% endif %}"
-       href="{{ url_for('home', view='list', status=(status if status != 'all' else None), q=(query or None), mine=(1 if mine else None)) }}">List</a>
+       href="{{ url_for('home', view='list', status=(status if status != 'all' else None), q=(query or None), mine=(1 if mine else None), type=type_id) }}">List</a>
   </div>
 </div>
 
 {% if not cases %}
   <div class="card empty">
-    {% if status != 'all' or query or mine %}
+    {% if status != 'all' or query or mine or type_id %}
       No projects match these filters.
     {% elif has_permission(user, 'create_projects') %}
-    No projects yet. Click <strong>New Project</strong> to create the first one.
+      No projects yet. Click <strong>New Project</strong> to create the first one.
     {% else %}
       No projects are assigned to you yet.
     {% endif %}
@@ -46,6 +60,7 @@
         {% for c in col.cases %}
           <article class="project-card">
             <a class="project-title" href="{{ url_for('case_detail', case_id=c.id) }}">{{ c.customer_name }}</a>
+            {% if c.type_name %}<div class="project-type">{{ c.type_name }}</div>{% endif %}
             <div class="project-tags">
               <span class="pill risk-{{ c.risk_rating|lower }}">{{ c.risk_rating }}</span>
               <span class="chip due-{{ c.due_class }}">{{ c.due_label }}</span>
@@ -68,7 +83,7 @@
     <table class="case-table">
       <thead>
         <tr>
-          <th>Project</th><th>Risk</th><th>Current stage</th><th>Progress</th>
+          <th>Project</th><th>Type</th><th>Risk</th><th>Current stage</th><th>Progress</th>
           <th>Owner</th><th>Manager</th><th>Due</th>
         </tr>
       </thead>
@@ -76,6 +91,7 @@
         {% for c in cases %}
           <tr>
             <td class="strong"><a class="row-link" href="{{ url_for('case_detail', case_id=c.id) }}">{{ c.customer_name }}</a></td>
+            <td class="muted-sm">{{ c.type_name or "—" }}</td>
             <td><span class="pill risk-{{ c.risk_rating|lower }}">{{ c.risk_rating }}</span></td>
             <td>{{ c.current_stage or "All stages complete" }}</td>
             <td>

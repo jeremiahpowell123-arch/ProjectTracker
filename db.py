@@ -3,7 +3,11 @@ from werkzeug.security import generate_password_hash
 
 DB_PATH = "tracker.db"
 
-# The default master workflow: (stage name, high priority?)
+# The first project type, made when the database is new. Administrators can
+# rename it, change its tasks, or add other project types.
+DEFAULT_TYPE_NAME = "Standard Project"
+
+# Its starting tasks: (task name, high priority?)
 DEFAULT_STAGES = [
     ("Intake & Document Collection", 0),
     ("Due Diligence Performed", 0),
@@ -28,6 +32,24 @@ CREATE TABLE IF NOT EXISTS user_permissions (
     PRIMARY KEY (user_id, permission)
 );
 
+CREATE TABLE IF NOT EXISTS project_types (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    active INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS type_tasks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    type_id INTEGER NOT NULL REFERENCES project_types(id),
+    name TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    high_priority INTEGER NOT NULL DEFAULT 0,
+    active INTEGER NOT NULL DEFAULT 1
+);
+
+-- Older versions kept one master workflow here. It is now only read once,
+-- to carry an existing workflow over into the first project type.
 CREATE TABLE IF NOT EXISTS template_stages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
@@ -44,7 +66,8 @@ CREATE TABLE IF NOT EXISTS cases (
     owner_id INTEGER NOT NULL REFERENCES users(id),
     manager_id INTEGER NOT NULL REFERENCES users(id),
     created_by INTEGER NOT NULL REFERENCES users(id),
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    type_id INTEGER REFERENCES project_types(id)
 );
 
 CREATE TABLE IF NOT EXISTS case_stages (
@@ -87,6 +110,10 @@ def init_db():
             "ALTER TABLE users ADD COLUMN also_role TEXT NOT NULL DEFAULT 'None'"
         )
 
+    case_columns = {r["name"] for r in conn.execute("PRAGMA table_info(cases)")}
+    if "type_id" not in case_columns:
+        conn.execute("ALTER TABLE cases ADD COLUMN type_id INTEGER REFERENCES project_types(id)")
+
     user_count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
     if user_count == 0:
         demo_users = [
@@ -101,14 +128,34 @@ def init_db():
                 (name, username, initials, role, generate_password_hash("demo1234")),
             )
 
-    stage_count = conn.execute("SELECT COUNT(*) FROM template_stages").fetchone()[0]
-    if stage_count == 0:
-        for position, (name, high_priority) in enumerate(DEFAULT_STAGES, start=1):
+    # First start, or first start after upgrading: make the first project type.
+    # An existing master workflow becomes that type's tasks.
+    type_count = conn.execute("SELECT COUNT(*) FROM project_types").fetchone()[0]
+    if type_count == 0:
+        type_id = conn.execute(
+            "INSERT INTO project_types (name, position) VALUES (?, 1)",
+            (DEFAULT_TYPE_NAME,),
+        ).lastrowid
+        old = conn.execute(
+            "SELECT name, high_priority FROM template_stages "
+            "WHERE active = 1 ORDER BY position"
+        ).fetchall()
+        tasks = [(r["name"], r["high_priority"]) for r in old] or DEFAULT_STAGES
+        for position, (name, high_priority) in enumerate(tasks, start=1):
             conn.execute(
-                "INSERT INTO template_stages (name, position, high_priority) "
-                "VALUES (?, ?, ?)",
-                (name, position, high_priority),
+                "INSERT INTO type_tasks (type_id, name, position, high_priority) "
+                "VALUES (?, ?, ?, ?)",
+                (type_id, name, position, high_priority),
             )
+
+    # Projects made before project types existed belong to the first type.
+    first_type = conn.execute(
+        "SELECT id FROM project_types ORDER BY position, id LIMIT 1"
+    ).fetchone()
+    if first_type is not None:
+        conn.execute(
+            "UPDATE cases SET type_id = ? WHERE type_id IS NULL", (first_type["id"],)
+        )
 
     conn.commit()
     conn.close()

@@ -7,6 +7,7 @@
   <h1>{{ case.customer_name }}</h1>
   <span class="pill risk-{{ case.risk_rating|lower }}">{{ case.risk_rating }}</span>
   <span class="chip due-{{ case.due_class }}">{{ case.due_label }}</span>
+  {% if case.type_name %}<span class="type-tag">{{ case.type_name }}</span>{% endif %}
 </div>
 
 <div class="card meta-grid">

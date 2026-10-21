@@ -4,13 +4,26 @@
 <a class="back" href="{{ url_for('home') }}">← Back to projects</a>
 <div class="page-head">
   <h1>New Project</h1>
-  <p class="muted">Choose an owner and a manager. The project starts with the standard workflow.</p>
+  <p class="muted">Choose a project type, an owner and a manager. The project starts with that type's tasks.</p>
 </div>
 
+{% if not types %}
+  <div class="card empty">
+    No project types are ready yet. An Administrator needs to add a project type with at least one task under <strong>Workflows</strong>.
+  </div>
+{% else %}
+{% set selected_type = form.get('type_id') or (types[0]['id']|string) %}
 <div class="form-layout">
   <form method="post" class="card form-card">
     <label for="customer_name">Project name <span class="hint">(fictional names only in this demo)</span></label>
     <input id="customer_name" name="customer_name" value="{{ form.get('customer_name', '') }}" required>
+
+    <label for="type_id">Project type</label>
+    <select id="type_id" name="type_id" required>
+      {% for t in types %}
+        <option value="{{ t['id'] }}" {% if selected_type == t['id']|string %}selected{% endif %}>{{ t['name'] }}</option>
+      {% endfor %}
+    </select>
 
     <label for="risk_rating">Risk</label>
     <select id="risk_rating" name="risk_rating" required>
@@ -43,13 +56,30 @@
   </form>
 
   <aside class="card stage-preview">
-    <h2>Starting stages</h2>
-    <p class="muted-sm">Copied from the standard workflow.</p>
-    <ol>
-      {% for s in stages %}
-        <li>{{ s['name'] }}{% if s['high_priority'] %} <span class="chip due-review">High priority</span>{% endif %}</li>
-      {% endfor %}
-    </ol>
+    <h2>Starting tasks</h2>
+    <p class="muted-sm">Copied from the project type when you create the project.</p>
+    {% for t in types %}
+      <ol data-type-tasks="{{ t['id'] }}" {% if selected_type != t['id']|string %}hidden{% endif %}>
+        {% for k in t['tasks'] %}
+          <li>{{ k['name'] }}{% if k['high_priority'] %} <span class="chip due-review">High priority</span>{% endif %}</li>
+        {% endfor %}
+      </ol>
+    {% endfor %}
   </aside>
 </div>
+
+<script>
+  (function () {
+    var select = document.getElementById("type_id");
+    var lists = document.querySelectorAll("[data-type-tasks]");
+    function showTasks() {
+      lists.forEach(function (list) {
+        list.hidden = list.getAttribute("data-type-tasks") !== select.value;
+      });
+    }
+    select.addEventListener("change", showTasks);
+    showTasks();
+  })();
+</script>
+{% endif %}
 {% endblock %}

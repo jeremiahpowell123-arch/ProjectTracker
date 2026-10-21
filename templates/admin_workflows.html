@@ -1,0 +1,106 @@
+{% extends "app_base.html" %}
+{% block title %}Workflows · ProjectTracker{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Workflows</h1>
+  <p class="muted">Project types and the tasks each one includes. Changes apply to projects created afterward. Projects already in progress keep the tasks they started with.</p>
+</div>
+
+<form method="post" action="{{ url_for('create_type') }}" class="card add-type">
+  <label for="new-type-name">New project type</label>
+  <div class="inline-form">
+    <input id="new-type-name" name="name" maxlength="80" placeholder="For example: Vendor Onboarding" required>
+    <button type="submit">Add project type</button>
+  </div>
+</form>
+
+{% for t in types %}
+<section class="card wf-type" id="type-{{ t['id'] }}">
+  <header class="wf-head">
+    <form method="post" action="{{ url_for('rename_type', type_id=t['id']) }}" class="inline-form grow">
+      <input name="name" value="{{ t['name'] }}" maxlength="80" required aria-label="Project type name">
+      <button class="btn small" type="submit">Rename</button>
+    </form>
+    <span class="muted-sm">{{ t['case_count'] }} project{{ '' if t['case_count'] == 1 else 's' }} so far</span>
+    {% if types|length > 1 %}
+      <form method="post" action="{{ url_for('remove_type', type_id=t['id']) }}">
+        <button class="btn small secondary" type="submit">Remove type</button>
+      </form>
+    {% endif %}
+  </header>
+
+  <ol class="wf-tasks">
+    {% for k in t['tasks'] %}
+      <li class="wf-task">
+        <div class="wf-move">
+          <form method="post" action="{{ url_for('move_task', task_id=k['id']) }}">
+            <input type="hidden" name="direction" value="up">
+            <button class="icon-btn" type="submit" aria-label="Move {{ k['name'] }} up" {% if loop.first %}disabled{% endif %}>↑</button>
+          </form>
+          <form method="post" action="{{ url_for('move_task', task_id=k['id']) }}">
+            <input type="hidden" name="direction" value="down">
+            <button class="icon-btn" type="submit" aria-label="Move {{ k['name'] }} down" {% if loop.last %}disabled{% endif %}>↓</button>
+          </form>
+        </div>
+        <form class="wf-edit" method="post" action="{{ url_for('update_task', task_id=k['id']) }}">
+          <input name="name" value="{{ k['name'] }}" maxlength="80" required aria-label="Task name">
+          <span class="muted-sm">High priority</span>
+          <div class="seg toggle" role="radiogroup" aria-label="High priority for {{ k['name'] }}">
+            <label><input type="radio" name="high_priority" value="off" {% if not k['high_priority'] %}checked{% endif %}><span>Off</span></label>
+            <label><input type="radio" name="high_priority" value="on" {% if k['high_priority'] %}checked{% endif %}><span>On</span></label>
+          </div>
+          <button class="btn small" type="submit">Save</button>
+        </form>
+        <form method="post" action="{{ url_for('remove_task', task_id=k['id']) }}">
+          <button class="btn small secondary" type="submit">Remove</button>
+        </form>
+      </li>
+    {% else %}
+      <li class="wf-empty">No tasks yet. Add the first one below. A project type needs at least one task before projects can use it.</li>
+    {% endfor %}
+  </ol>
+
+  <form method="post" action="{{ url_for('add_task', type_id=t['id']) }}" class="wf-add">
+    <input name="name" maxlength="80" placeholder="Add a task, for example: Sent to QC" required aria-label="New task name">
+    <span class="muted-sm">High priority</span>
+    <div class="seg toggle" role="radiogroup" aria-label="High priority for the new task">
+      <label><input type="radio" name="high_priority" value="off" checked><span>Off</span></label>
+      <label><input type="radio" name="high_priority" value="on"><span>On</span></label>
+    </div>
+    <button type="submit">Add task</button>
+  </form>
+
+  {% if t['removed_tasks'] %}
+    <details class="wf-removed">
+      <summary>Removed tasks ({{ t['removed_tasks']|length }})</summary>
+      <ul>
+        {% for k in t['removed_tasks'] %}
+          <li>
+            <span>{{ k['name'] }}</span>
+            <form method="post" action="{{ url_for('restore_task', task_id=k['id']) }}">
+              <button class="btn small secondary" type="submit">Restore</button>
+            </form>
+          </li>
+        {% endfor %}
+      </ul>
+    </details>
+  {% endif %}
+</section>
+{% endfor %}
+
+{% if removed_types %}
+  <details class="card wf-removed wf-removed-types">
+    <summary>Removed project types ({{ removed_types|length }})</summary>
+    <ul>
+      {% for t in removed_types %}
+        <li>
+          <span>{{ t['name'] }}</span>
+          <form method="post" action="{{ url_for('restore_type', type_id=t['id']) }}">
+            <button class="btn small secondary" type="submit">Restore</button>
+          </form>
+        </li>
+      {% endfor %}
+    </ul>
+  </details>
+{% endif %}
+{% endblock %}
